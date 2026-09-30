@@ -6,6 +6,7 @@ Site publicado pelo GitHub Pages: https://sala-situacao-igam.github.io/ferrament
 |---|---|---|
 | `tempo-severo/` | Editor de Tempo Severo | v0.17 |
 | `chuva/` | Chuva + Tendência 48h | v0.3 |
+| `alertas/` | Alertas por município | v6 |
 
 ## Como atualizar uma ferramenta
 1. Substitua os arquivos da pasta da ferramenta pelos da nova versão (mantendo `index.html`, `data/` e `assets/`).

@@ -23,7 +23,14 @@ a.card:hover{border-color:var(--azul);box-shadow:0 2px 10px #0f5c8c22}
 .tag{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;background:#e6f0f7;color:var(--azul)}
 .card.off{opacity:.6}
 .card.off .tag{background:#eee;color:#666}
-footer{font-size:12px;color:var(--suave);text-align:center;padding:0 16px 24px}
+.apoio{background:#fff;border-top:1px solid var(--borda);margin-top:8px}
+.apoio .wrap{display:flex;align-items:center;gap:28px;padding:20px 16px;flex-wrap:wrap}
+.apoio .rotulo{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--suave);width:100%;margin-bottom:-12px}
+.apoio img.appa{height:48px}
+.rio{display:flex;align-items:center;gap:14px;flex:1;min-width:280px}
+.rio img{height:64px;flex:none}
+.rio p{margin:0;font-size:12.5px;line-height:1.5;color:var(--texto);max-width:520px}
+footer{font-size:12px;color:var(--suave);text-align:center;padding:14px 16px 24px}
 </style>
 </head>
 <body>
@@ -43,12 +50,20 @@ footer{font-size:12px;color:var(--suave);text-align:center;padding:0 16px 24px}
     <p>Previsão de chuva e tendência 48h: faixas de acumulado com legenda editável e geração de PNG.</p>
     <span class="tag">v0.3</span>
   </a>
-  <div class="card off">
-    <h2>Terceira ferramenta</h2>
-    <p>Em preparação.</p>
-    <span class="tag">em breve</span>
-  </div>
+  <a class="card" href="alertas/">
+    <h2>Alertas</h2>
+    <p>Emissão de alertas por município: seleção no mapa ou desenho livre, lista de alertas ativos e exportação em KML.</p>
+    <span class="tag">v6</span>
+  </a>
 </div></main>
+<section class="apoio"><div class="wrap">
+  <div class="rotulo">Apoio</div>
+  <img class="appa" src="assets/logo_appa.png" alt="APPA Cultura &amp; Patrimônio">
+  <div class="rio">
+    <img src="assets/logo_reparacao_rio_doce.png" alt="Reparação Rio Doce">
+    <p>Iniciativa realizada com recursos do Acordo de Reparação do Rio Doce, firmado em decorrência do rompimento da Barragem de Fundão, da Samarco S.A. O rompimento, ocorrido em 5 de novembro de 2015, tirou a vida de 19 pessoas.</p>
+  </div>
+</div></section>
 <footer>Os desenhos salvos com “Salvar neste navegador” ficam apenas no computador e navegador de quem salvou.</footer>
 </body>
 </html>
