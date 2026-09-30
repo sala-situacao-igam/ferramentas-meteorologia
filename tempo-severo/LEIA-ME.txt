@@ -1,0 +1,1 @@
+Versão v0.11 corrigida: pacote completo com logos, mapa de referência, mesorregiões, microrregiões, cidades e estados vizinhos.

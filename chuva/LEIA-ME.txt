@@ -1,0 +1,3 @@
+SIMGE/IGAM — Protótipo Chuva + Tendência v0.1
+Projeto separado do Tempo Severo.
+Abra index.html por servidor HTTP local/Colab.
