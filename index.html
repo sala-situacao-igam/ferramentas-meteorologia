@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ferramentas de Meteorologia — SIMGE/IGAM</title>
+<style>
+:root{--azul:#0f5c8c;--texto:#1f2937;--suave:#637083;--borda:#d9e0e7;--fundo:#eef2f5}
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,Helvetica,sans-serif;color:var(--texto);background:var(--fundo)}
+header{background:#fff;border-bottom:1px solid var(--borda)}
+.wrap{max-width:980px;margin:0 auto;padding:0 16px}
+.top{display:flex;align-items:center;gap:18px;padding:18px 0;flex-wrap:wrap}
+.top img{height:46px;object-fit:contain}
+.top h1{font-size:20px;margin:0}
+.top p{margin:4px 0 0;font-size:13px;color:var(--suave)}
+main.wrap{padding:28px 16px 40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.card{display:block;background:#fff;border:1px solid var(--borda);border-radius:10px;padding:18px;text-decoration:none;color:inherit;transition:box-shadow .15s,border-color .15s}
+a.card:hover{border-color:var(--azul);box-shadow:0 2px 10px #0f5c8c22}
+.card h2{font-size:16px;margin:0 0 6px}
+.card p{font-size:13px;line-height:1.45;color:var(--suave);margin:0 0 12px}
+.tag{display:inline-block;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;background:#e6f0f7;color:var(--azul)}
+.card.off{opacity:.6}
+.card.off .tag{background:#eee;color:#666}
+footer{font-size:12px;color:var(--suave);text-align:center;padding:0 16px 24px}
+</style>
+</head>
+<body>
+<header><div class="wrap top">
+  <img src="assets/logo_igam.png" alt="IGAM">
+  <img src="assets/logo_simge.png" alt="SIMGE">
+  <div><h1>Ferramentas de Meteorologia</h1><p>Sala de Situação — SIMGE/IGAM</p></div>
+</div></header>
+<main class="wrap"><div class="grid">
+  <a class="card" href="tempo-severo/">
+    <h2>Tempo Severo</h2>
+    <p>Previsão probabilística de tempo severo: desenho de áreas por nível, lista de microrregiões, PNG e KML.</p>
+    <span class="tag">v0.17</span>
+  </a>
+  <a class="card" href="chuva/">
+    <h2>Chuva e Tendência</h2>
+    <p>Previsão de chuva e tendência 48h: faixas de acumulado com legenda editável e geração de PNG.</p>
+    <span class="tag">v0.3</span>
+  </a>
+  <div class="card off">
+    <h2>Terceira ferramenta</h2>
+    <p>Em preparação.</p>
+    <span class="tag">em breve</span>
+  </div>
+</div></main>
+<footer>Os desenhos salvos com “Salvar neste navegador” ficam apenas no computador e navegador de quem salvou.</footer>
+</body>
+</html>
