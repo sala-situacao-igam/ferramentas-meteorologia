@@ -1,11 +1,12 @@
 /*
- * Ponte para o Drive — usada pelas versões Apps Script do Tempo Severo e da Chuva.
+ * Ponte para o Drive — usada pelas versões Apps Script do Tempo Severo, da Chuva e da Previsão diária.
  *
  * As ferramentas geram PNG e KML criando um link de download e chamando .click().
  * Esta ponte intercepta esse clique e manda o arquivo para o Drive via google.script.run.
  * Fora do Apps Script (sem google.script.run), o download normal continua funcionando.
  *
- * Depende de window.FERRAMENTA ('tempo-severo' ou 'chuva'), definido na página.
+ * Depende de window.FERRAMENTA ('tempo-severo', 'chuva' ou 'previsao'), definido na página.
+ * Opcional: window.PONTE_SELO troca o texto do selo verde.
  */
 (function () {
   var temAppsScript = !!(window.google && google.script && google.script.run);
@@ -30,7 +31,7 @@
   if (temAppsScript) {
     var selo = document.createElement('div');
     selo.id = 'ponteSelo';
-    selo.textContent = 'PNG e KML são salvos no Drive';
+    selo.textContent = window.PONTE_SELO || 'PNG e KML são salvos no Drive';
     document.body.appendChild(selo);
   }
 
