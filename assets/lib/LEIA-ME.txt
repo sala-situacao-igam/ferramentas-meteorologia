@@ -1,0 +1,1 @@
+Leaflet 1.9.4 (BSD-2), Leaflet.draw 1.0.4 (MIT), Turf 7.4.0 (MIT). Cópias sem alteração dos pacotes npm oficiais, hospedadas aqui para não depender de CDNs externos.
