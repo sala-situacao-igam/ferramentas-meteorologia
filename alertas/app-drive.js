@@ -1,4 +1,5 @@
-/* Alertas e passagem de plantão — código da página (v3.2, 06/10/2026).
+/* Alertas e passagem de plantão — código da página (v3.2.1, 06/10/2026).
+   v3.2.1: seletor de turno numa linha própria acima de Data/Início/Fim (a grade não desalinha).
    v3.2: plantão único da equipe com turno (Diurno/Noturno) e subpastas AAAAMMDD/Turno no Drive;
    relatório com os alertas de todos; aviso de duplicação (só alertas vigentes); Mapa de Previsões
    obrigatório para encerrar (não é mais salvo à parte no Drive); botão "Trocar conta".
@@ -1030,25 +1031,44 @@ function nomeRelatorio(snap){
 state.turno=turnoPeloRelogio();
 let turnoServidor=null;   // turno gravado no plantão (por quem emitiu o primeiro alerta)
 
-/* seletor "Plantão" ao lado de Início/Fim, criado aqui para não precisar mexer no Alertas.html */
+/* seletor "Plantão": linha própria ACIMA da grade Data/Início/Fim, para não desalinhar a grade.
+   Criado aqui para não precisar mexer no Alertas.html; copia o visual do campo "Início". */
 (function criarSeletorTurno(){
   if($('pTurno')||!$('pInicio'))return;
-  const ref=$('pInicio').parentElement;
-  const box=document.createElement(ref.tagName==='LABEL'?'div':ref.tagName);
-  box.className=ref.className;
-  box.innerHTML='<label for="pTurno">Plantão</label>'+
-    '<select id="pTurno"><option value="Diurno">Diurno (7h às 19h)</option><option value="Noturno">Noturno (19h às 7h)</option></select>'+
-    '<div id="pTurnoInfo" class="hint" style="font-size:12px;margin-top:3px"></div>';
-  ref.parentElement.insertBefore(box,ref);
+  const celula=$('pInicio').parentElement,grade=celula.parentElement;
+  const labRef=celula.querySelector('label')||grade.querySelector('label');
+  const linha=document.createElement('div');
+  linha.id='linhaTurno';
+  linha.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:0 0 12px';
+  const lab=document.createElement('label');
+  lab.htmlFor='pTurno';lab.textContent='Plantão';
+  if(labRef)lab.className=labRef.className;
+  lab.style.margin='0';
+  const sel=document.createElement('select');
+  sel.id='pTurno';sel.className=$('pInicio').className;
+  sel.innerHTML='<option value="Diurno">Diurno (7h às 19h)</option><option value="Noturno">Noturno (19h às 7h)</option>';
+  try{   // mesmo visual do campo de hora
+    const cs=getComputedStyle($('pInicio'));
+    ['border','borderRadius','padding','fontFamily','fontSize','fontWeight','color','backgroundColor','lineHeight']
+      .forEach(k=>{if(cs[k])sel.style[k]=cs[k];});
+  }catch(e){}
+  sel.style.width='auto';sel.style.minWidth='190px';sel.style.margin='0';sel.style.cursor='pointer';
+  const info=document.createElement('span');
+  info.id='pTurnoInfo';info.style.cssText='font-size:12px;opacity:.75';
+  linha.append(lab,sel,info);
+  grade.parentElement.insertBefore(linha,grade);
 })();
 function mostrarTurno(){
   if(!$('pTurno'))return;
   $('pTurno').value=state.turno.turno;
   if(state.turno.data)$('pData').value=state.turno.data;
   const info=$('pTurnoInfo');
-  if(info)info.textContent=turnoServidor&&turnoServidor.por&&state.plantaoId
-    ?'Turno definido no primeiro alerta do plantão ('+turnoServidor.por+'). Os arquivos vão para a pasta '+String(state.turno.data).replace(/-/g,'')+'/'+state.turno.turno+'.'
-    :'Os arquivos vão para a pasta '+String(state.turno.data).replace(/-/g,'')+'/'+state.turno.turno+' no Drive.';
+  if(info){
+    const pasta=String(state.turno.data).replace(/-/g,'')+'/'+state.turno.turno;
+    const quem=turnoServidor&&turnoServidor.por&&state.plantaoId?String(turnoServidor.por).split('@')[0]:'';
+    info.textContent='Pasta no Drive: '+pasta+(quem?' · definido no 1º alerta ('+quem+')':'');
+    info.title=quem?'Turno definido no primeiro alerta do plantão por '+turnoServidor.por+'.':'';
+  }
 }
 function preencherHorariosTurno(){
   const h=TURNOS[state.turno.turno];if(!h)return;
