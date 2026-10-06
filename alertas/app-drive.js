@@ -1,4 +1,7 @@
-/* Alertas e passagem de plantão — código da página (v3.2.1, 06/10/2026).
+/* Alertas e passagem de plantão — código da página (v3.3, 06/10/2026).
+   v3.3: cor do município = alerta VIGENTE tem prioridade sobre o vencido (novo alerta volta a azul);
+   alerta excluído fica na planilha como "Excluído" e sai de mapa, lista, PDF e TXT;
+   TXT do turno montado a partir da planilha (alertas de toda a equipe, sem os excluídos).
    v3.2.1: seletor de turno numa linha própria acima de Data/Início/Fim (a grade não desalinha).
    v3.2: plantão único da equipe com turno (Diurno/Noturno) e subpastas AAAAMMDD/Turno no Drive;
    relatório com os alertas de todos; aviso de duplicação (só alertas vigentes); Mapa de Previsões
@@ -242,7 +245,19 @@ function classeDoAlerta(a,nowTs){
   const r=a.expiresAt-nowTs;
   return r<=0?'expired':(r<=30*60*1000?'expiring':'alerted');
 }
-const RANK={alerted:1,expiring:2,expired:3};
+/* Vários alertas no mesmo município: vale o de maior prioridade. Um alerta VIGENTE (novo)
+   sempre ganha de um alerta já vencido do mesmo dia; quando ele vencer, o município volta ao vermelho. */
+const RANK={alerted:3,expiring:2,expired:1};
+/* Alerta que define a situação atual do município (para a dica do mouse). */
+function alertaDoMunicipio(name){
+  const nowTs=Date.now();let melhor=null,rm=0;
+  state.active.forEach(a=>{
+    if(!a.cities.includes(name))return;
+    const r=RANK[classeDoAlerta(a,nowTs)];
+    if(!melhor||r>rm||(r===rm&&(a.expiresAt||0)>(melhor.expiresAt||0))){melhor=a;rm=r;}
+  });
+  return melhor;
+}
 function pintarMapa(){
   const nowTs=Date.now(),cls=new Map();
   state.active.forEach(a=>{const c=classeDoAlerta(a,nowTs);a.cities.forEach(n=>{if(!cls.has(n)||RANK[c]>RANK[cls.get(n)])cls.set(n,c);});});
@@ -277,10 +292,11 @@ $('novo').onclick=()=>{state.selected.clear();drawLine.style.display='none';setM
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function showTip(ev,name){
-  const a=state.active.find(x=>x.cities.includes(name));
+  const a=alertaDoMunicipio(name);
+  const n=a?state.active.filter(x=>x.cities.includes(name)).length:0;
   const f=featureByName.get(name),meso=f&&f.properties.meso?'<br>'+esc(f.properties.meso):'';
   tooltip.style.display='block';tooltip.style.left=(ev.clientX+12)+'px';tooltip.style.top=(ev.clientY+12)+'px';
-  tooltip.innerHTML=a?`<b>${esc(name)}</b>${meso}<br>${esc(a.type)}<br>${esc(a.start)}–${esc(a.end)}<br>Responsável: ${esc(a.owner)}`:`<b>${esc(name)}</b>${meso}`;
+  tooltip.innerHTML=a?`<b>${esc(name)}</b>${meso}<br>${esc(a.type)}<br>${esc(a.start)}–${esc(a.end)}<br>Responsável: ${esc(a.owner)}${n>1?`<br><i>${n} alertas neste plantão</i>`:''}`:`<b>${esc(name)}</b>${meso}`;
 }
 function now(){const d=new Date();return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
 function hojeLocal(){const d=new Date(),p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
@@ -354,7 +370,24 @@ $('downloadKml').onclick=()=>{
 };
 
 /* ---------------- registro diário (.txt) ---------------- */
+function ddmmaa(iso){const[y,m,d]=String(iso||'').split('-');return d&&m&&y?d+m+y.slice(-2):'';}
+/* "dd/MM/yyyy HH:mm" -> "dd/mm/aa" (mesmo formato de data do .txt antigo) */
+function dataTxt(reg){const m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(String(reg||''));return m?m[1]+'/'+m[2]+'/'+m[3].slice(-2):'';}
 $('downloadTxt').onclick=()=>{
+  if(temFuncao('alertasDoTurno')){
+    const t={...state.turno},btn=$('downloadTxt');
+    btn.disabled=true;
+    google.script.run
+      .withSuccessHandler(r=>{
+        btn.disabled=false;
+        const rows=((r&&r.linhas)||[]).map(x=>[dataTxt(x.registradoEm),hhmm(x.horario)||x.horario,hhmm(x.duracao)||x.duracao,x.municipio].join('\t'));
+        if(!rows.length){alert('Não há alertas válidos registrados no plantão '+rotuloTurno(t)+'.\n\nPara outro turno, escolha-o no campo "Plantão" (aba Plantão e relatório).');return;}
+        baixarLocal('alertas_'+ddmmaa(t.data)+'_'+t.turno.toLowerCase()+'.txt',new Blob([rows.join('\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));
+      })
+      .withFailureHandler(e=>{btn.disabled=false;alert('Não foi possível montar o .txt pela planilha: '+(e&&e.message||e));})
+      .alertasDoTurno(t.data,t.turno);
+    return;
+  }
   if(!state.dailyRows.length){alert('Ainda não há alertas emitidos neste plantão.');return;}
   const today=dateBr();
   const rows=state.dailyRows.filter(r=>r.date===today).map(r=>[r.date,r.time,r.duration,r.city].join('\t'));
@@ -433,8 +466,9 @@ function desenharAlertas(){
 }
 function confirmarExclusao(a){
   return confirm(`Excluir o alerta emitido às ${a.start}?\n\n`+
-    `Ele é apagado da planilha (aba Alertas), o KML vai para a lixeira do Drive (recuperável por 30 dias) `+
-    `e ele sai do mapa, da lista, do .txt, do campo "Alertas gerados" e do mapa do relatório em PDF.`);
+    `Ele continua registrado na planilha (aba Alertas) marcado como "Excluído", com o seu e-mail e o horário, `+
+    `mas deixa de valer: sai do mapa, da lista, do .txt, do campo "Alertas gerados" e do relatório em PDF. `+
+    `O KML vai para a lixeira do Drive (recuperável por 30 dias).`);
 }
 /* Tira o alerta só desta tela (mapa, lista, .txt, "Alertas gerados" e rascunho). */
 function removerAlertaDaTela(a){
@@ -452,7 +486,7 @@ function deleteAlert(a){
   google.script.run
     .withSuccessHandler(r=>{
       removerAlertaDaTela(a);sincronizarAlertas();
-      if(r&&!r.kmlNaLixeira)alert('Alerta excluído da planilha, mas o KML não pôde ir para a lixeira. Se precisar, apague-o na pasta de alertas do Drive.');
+      if(r&&!r.kmlNaLixeira)alert('Alerta marcado como excluído, mas o KML não pôde ir para a lixeira. Se precisar, apague-o na pasta do turno no Drive.');
     })
     .withFailureHandler(err=>{
       if(btn){btn.disabled=false;btn.textContent='Excluir alerta';}
