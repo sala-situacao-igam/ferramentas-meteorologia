@@ -2,6 +2,7 @@
    v3.3: cor do município = alerta VIGENTE tem prioridade sobre o vencido (novo alerta volta a azul);
    alerta excluído fica na planilha como "Excluído" e sai de mapa, lista, PDF e TXT;
    TXT do turno montado a partir da planilha (alertas de toda a equipe, sem os excluídos).
+   v3.3.1: Mapa de Previsões (PNG) obrigatório só para encerrar o plantão DIURNO; no noturno é opcional.
    v3.2.1: seletor de turno numa linha própria acima de Data/Início/Fim (a grade não desalinha).
    v3.2: plantão único da equipe com turno (Diurno/Noturno) e subpastas AAAAMMDD/Turno no Drive;
    relatório com os alertas de todos; aviso de duplicação (só alertas vigentes); Mapa de Previsões
@@ -930,9 +931,9 @@ function salvarPassagemAgora(){
 }
 $('salvarPlantao').onclick=()=>{
   if(!$('pResp').value.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').focus();return;}
-  if(!mapaPrev.url){
-    status('Anexe o Mapa de Previsões (PNG) antes de encerrar o plantão.','erro');
-    aviso('Para encerrar o plantão, anexe a imagem do <b>Mapa de Previsões (PNG)</b> no formulário.',true);
+  if(!mapaPrev.url&&state.turno.turno==='Diurno'){   // no plantão noturno o PNG é opcional
+    status('Anexe o Mapa de Previsões (PNG) antes de encerrar o plantão diurno.','erro');
+    aviso('Para encerrar o plantão <b>diurno</b>, anexe a imagem do <b>Mapa de Previsões (PNG)</b> no formulário.',true);
     $('pMapaPrev').focus();return;
   }
   $('salvarPlantao').disabled=true;status('Conferindo os alertas da equipe…');
@@ -1177,13 +1178,13 @@ $('emit').onclick=()=>{
 };
 
 /* ---- Mapa de Previsões: obrigatório para encerrar ---- */
-const TXT_MAPA_PREV='Obrigatório para encerrar o plantão. Sai no relatório em PDF, embaixo do mapa de alertas (não é salvo à parte no Drive).';
+const TXT_MAPA_PREV='Obrigatório para encerrar o plantão diurno (no noturno é opcional). Sai no relatório em PDF, embaixo do mapa de alertas (não é salvo à parte no Drive).';
 (function ajustarRotuloMapaPrev(){
   const inp=$('pMapaPrev');if(!inp)return;
   const lab=document.querySelector('label[for="pMapaPrev"]')||inp.closest('label')||(inp.parentElement&&inp.parentElement.querySelector('label'));
   if(lab){
     const w=document.createTreeWalker(lab,NodeFilter.SHOW_TEXT);let n;
-    while((n=w.nextNode()))if(/opcional/i.test(n.nodeValue))n.nodeValue=n.nodeValue.replace(/,?\s*opcional/i,', obrigatório ao encerrar');
+    while((n=w.nextNode()))if(/opcional/i.test(n.nodeValue))n.nodeValue=n.nodeValue.replace(/,?\s*opcional/i,', obrigatório no diurno');
   }
   if(!mapaPrev.url&&$('pMapaPrevInfo'))$('pMapaPrevInfo').textContent=TXT_MAPA_PREV;
 })();
