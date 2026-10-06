@@ -1,7 +1,9 @@
 /* Código da ferramenta para a versão Apps Script (carregado de fora para o Apps Script não interferir).
    Gerado a partir de chuva/index.html. Depende de window.BASE_DADOS, definido na página.
    2026.10.05.2: mapa final no layout da Previsão diária (assets/layout-mapa.js); validade da Tendência
-   = 2º dia + 1; datas padrão no horário local. */
+   = 2º dia + 1; datas padrão no horário local.
+   2026.10.06.1: título da Tendência com os dois dias da tendência (ex.: "07 e 08/10/2026");
+   datas padrão pelo horário de Brasília (Minas Gerais), não pelo relógio do computador. */
 
 const LEVELS=[
 {id:'nao_significativa',rank:0,fill:'#BFEAF2',stroke:'#8FCBD6',label:'Chuva Não Significativa'},
@@ -34,7 +36,10 @@ document.getElementById('saveBtn').onclick=()=>{localStorage.setItem('simge-chuv
 function loadProduct(){drawnItems.clearLayers();try{const arr=JSON.parse(localStorage.getItem('simge-chuva-tend-v02-'+product)||'[]');arr.forEach(f=>addFeature(f,f.properties.level));}catch(e){}}
 function switchProduct(p){product=p;document.getElementById('tabChuva').classList.toggle('active',p==='chuva');document.getElementById('tabTend').classList.toggle('active',p==='tendencia');document.getElementById('trendDates').style.display=p==='tendencia'?'block':'none';loadProduct();ajustarValidade();setStatus(p==='chuva'?'Modo Previsão de Chuva.':'Modo Tendência 48h.')}
 document.getElementById('tabChuva').onclick=()=>switchProduct('chuva');document.getElementById('tabTend').onclick=()=>switchProduct('tendencia');
-function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};function initDates(){const d=new Date();forecastDate.value=iso(d);const d1=new Date(d);d1.setDate(d.getDate()+1);const d2=new Date(d);d2.setDate(d.getDate()+2);trendDate1.value=iso(d1);trendDate2.value=iso(d2);const v=new Date(d);v.setDate(v.getDate()+1);v.setHours(10,0,0,0);validUntil.value=`${iso(v)}T10:00`}initDates();loadProduct();
+function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};// "Hoje" no horário de Brasília (America/Sao_Paulo), qualquer que seja o fuso do computador.
+function hojeMG(){const o={};new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).forEach(p=>o[p.type]=p.value);return o.year+'-'+o.month+'-'+o.day}
+function somaDias(v,n){const d=new Date(v+'T12:00:00');d.setDate(d.getDate()+n);return iso(d)}
+function initDates(){const h=hojeMG();forecastDate.value=h;trendDate1.value=somaDias(h,1);trendDate2.value=somaDias(h,2);validUntil.value=`${somaDias(h,1)}T10:00`}initDates();loadProduct();
 function brDate(v){if(!v)return '';const [y,m,d]=v.split('-');return `${d}/${m}/${y}`}
 function union(fs){if(!fs.length)return null;if(fs.length===1)return fs[0];try{return turf.union(turf.featureCollection(fs))}catch(e){return fs[0]}}
 function visibleFeatures(){const src=features().map(f=>{const c=clipFeature(f);if(c)c.properties=f.properties;return c}).filter(Boolean),out=[];let high=null;for(const lv of LEVELS.slice().sort((a,b)=>b.rank-a.rank)){const same=src.filter(f=>f.properties.level===lv.id);for(const f of same){let v=f;if(high){try{v=turf.difference(turf.featureCollection([f,high]))}catch(e){}}if(v){v.properties={level:lv.id};out.push(v)}}const m=union(same);if(m)high=high?union([high,m]):m}return out.sort((a,b)=>levelById(a.properties.level).rank-levelById(b.properties.level).rank)}
@@ -52,6 +57,15 @@ function ajustarValidade(){
 }
 ['forecastDate','trendDate1','trendDate2'].forEach(id=>document.getElementById(id).addEventListener('change',ajustarValidade));
 ajustarValidade();
+// Título da Tendência: os dois dias da tendência.
+// 07 e 08/10/2026 | 31/10 e 01/11/2026 | 31/12/2026 e 01/01/2027
+function datasTendencia(d1,d2){
+  if(!d1||!d2)return 'data pendente';
+  const [y1,m1,a1]=d1.split('-'),[y2,m2,a2]=d2.split('-');
+  if(y1!==y2)return `${a1}/${m1}/${y1} e ${a2}/${m2}/${y2}`;
+  if(m1!==m2)return `${a1}/${m1} e ${a2}/${m2}/${y2}`;
+  return `${a1} e ${a2}/${m2}/${y2}`;
+}
 function opcoesMapa(){
   const fd=forecastDate.value,ano=(fd||iso(new Date())).slice(0,4);
   const nome=product==='chuva'?'Previsão de Chuva':'Tendência de Chuva';
@@ -59,7 +73,7 @@ function opcoesMapa(){
   const usados=LEVELS.filter(l=>fs.some(f=>f.properties.level===l.id)).sort((a,b)=>b.rank-a.rank);
   const [vd,vt]=(validUntil.value||'').split('T');
   return {
-    titulo:nome+' - '+(fd?brDate(fd):'data pendente'),
+    titulo:nome+' - '+(product==='tendencia'?datasTendencia(trendDate1.value,trendDate2.value):(fd?brDate(fd):'data pendente')),
     validade:vd?{date:vd,time:(vt||'10:00').slice(0,5)}:null,
     credito:nome+' - SIMGE/IGAM, '+ano,
     areas:fs.map(f=>{const lv=levelById(f.properties.level);return {geometry:f.geometry,fill:lv.fill,stroke:lv.stroke}}),
