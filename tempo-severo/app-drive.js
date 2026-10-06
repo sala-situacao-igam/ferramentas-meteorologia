@@ -1,6 +1,9 @@
 /* Código da ferramenta para a versão Apps Script (carregado de fora para o Apps Script não interferir).
    Gerado a partir de tempo-severo/index.html. Depende de window.BASE_DADOS, definido na página.
-   2026.10.05.2: mapa final no layout da Previsão diária (assets/layout-mapa.js). */
+   2026.10.05.2: mapa final no layout da Previsão diária (assets/layout-mapa.js).
+   2026.10.06.1: edição das áreas (clique na área: vértices, mover, trocar nível, Concluir/Cancelar),
+   Ctrl+Z / Desfazer (ponto do desenho, alteração da edição ou última ação) e a área guarda o desenho
+   original (o recorte em MG é feito só para mostrar e calcular). */
 
 const LEVELS=[
  {id:'Nivel0',label:'Tempestades não severas',rank:0,fill:'#D2F7CB',opacity:1,stroke:'#5BCB59'},
@@ -61,18 +64,243 @@ function refreshZOrder(){
 function addClippedFeatureToMap(feature,levelId){
   const clipped=clipFeatureToMG(feature);if(!clipped)return [];
   const lv=levelById(levelId);const added=[];
-  L.geoJSON(clipped,{style:styleFor(lv),onEachFeature:(f,l)=>{l._severity=lv.id;drawnItems.addLayer(l);attachPopup(l);added.push(l);}});
+  const orig=JSON.parse(JSON.stringify(feature));orig.properties={...(orig.properties||{}),level:lv.id};
+  L.geoJSON(clipped,{style:styleFor(lv),onEachFeature:(f,l)=>{l._severity=lv.id;l._orig=orig;drawnItems.addLayer(l);attachPopup(l);added.push(l);}});
   refreshZOrder();return added;
 }
 function renderLevels(){const el=document.getElementById('levels');el.innerHTML='';LEVELS.forEach(lv=>{const b=document.createElement('button');b.className='level'+(lv.id===selected.id?' active':'');b.innerHTML=`<span class="swatch" style="background:${lv.fill}"></span>${lv.label}`;b.onclick=()=>{selected=lv;document.getElementById('currentLabel').textContent=lv.label;renderLevels();};el.appendChild(b)});document.getElementById('legend').innerHTML=LEVELS.map(l=>`<div><span class="swatch" style="background:${l.fill}"></span>${l.label}</div>`).join('');}
 renderLevels();
+/* ===================== Editor de áreas (2026.10.06.1) =====================
+   Comum ao Tempo Severo e à Chuva/Tendência (o mesmo código nos dois app-drive.js).
+   - Clique numa área pronta: entra em edição (arrastar vértices; arrastar o ponto do meio
+     de um lado cria vértice; clicar num vértice o remove), trocar nível, "Mover" a área.
+     "Concluir" (Enter) recorta e recalcula UMA vez; "Cancelar" (Esc) volta como estava.
+   - Ctrl+Z: desenhando = tira o último ponto; editando = desfaz a última alteração da
+     edição; fora disso = desfaz a última ação (área criada, editada, excluída ou limpeza).
+   - A área guarda o desenho ORIGINAL (sem o recorte de MG); o recorte é só para mostrar e calcular.
+   Depende de Leaflet 1.9 e Leaflet.draw 1.0.4 (já carregados pelas páginas). */
+function criarEditorAreas(o){
+  const map=o.map,MAXH=40;
+  const historico=[];
+  let ed=null;                       // sessão de edição em andamento
+  const copiar=v=>Array.isArray(v)?v.map(copiar):L.latLng(v.lat,v.lng);
+  const transladar=(v,dLat,dLng)=>Array.isArray(v)?v.map(x=>transladar(x,dLat,dLng)):L.latLng(v.lat+dLat,v.lng+dLng);
+
+  /* ---------- barras flutuantes no mapa ---------- */
+  const css=document.createElement('style');
+  css.textContent=`.ea-barra{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1000;display:none;
+    align-items:center;gap:6px;flex-wrap:wrap;justify-content:center;max-width:calc(100% - 120px);
+    background:#fff;border:1px solid #9fb6d6;border-radius:8px;padding:6px 8px;box-shadow:0 2px 10px rgba(0,0,0,.18);
+    font:13px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#0f2a4a}
+  .ea-barra b{margin-right:2px}.ea-barra button,.ea-barra select{font:inherit;padding:4px 8px;border:1px solid #9fb6d6;
+    border-radius:6px;background:#f4f8fd;color:#0f2a4a;cursor:pointer}
+  .ea-barra button:hover{background:#e3edf9}.ea-barra button.ea-ok{background:#1f6fd1;border-color:#1f6fd1;color:#fff}
+  .ea-barra button.ea-perigo{color:#b42318;border-color:#e4a5a0;background:#fff5f4}
+  .ea-barra button.ea-ativo{background:#0f2a4a;color:#fff;border-color:#0f2a4a}
+  .ea-desfazer{position:absolute;right:10px;bottom:28px;z-index:1000;font:13px system-ui,Arial,sans-serif;padding:5px 9px;
+    border:1px solid #9fb6d6;border-radius:6px;background:#fff;color:#0f2a4a;cursor:pointer;box-shadow:0 1px 5px rgba(0,0,0,.15)}
+  .ea-desfazer:disabled{opacity:.45;cursor:default}
+  .ea-movendo,.ea-movendo .leaflet-interactive{cursor:move!important}`;
+  document.head.appendChild(css);
+  const cont=map.getContainer();
+  const nova=html=>{const d=document.createElement('div');d.className='ea-barra';d.innerHTML=html;cont.appendChild(d);
+    L.DomEvent.disableClickPropagation(d);L.DomEvent.disableScrollPropagation(d);return d;};
+  const barraDesenho=nova('<b>Desenhando</b><button data-a="ponto" title="Ctrl+Z">↶ Desfazer ponto</button>'+
+    '<button data-a="cancelar" class="ea-perigo" title="Esc">Cancelar desenho</button>'+
+    '<span style="opacity:.75">Feche clicando no 1º ponto</span>');
+  const barraEdicao=nova('<b>Editando área</b><select data-a="nivel" title="Nível / classificação"></select>'+
+    '<button data-a="mover" title="Arrastar a área inteira">✥ Mover</button>'+
+    '<button data-a="desfazer" title="Ctrl+Z">↶ Desfazer</button>'+
+    '<button data-a="concluir" class="ea-ok" title="Enter">Concluir</button>'+
+    '<button data-a="cancelar" title="Esc">Cancelar</button>'+
+    '<button data-a="excluir" class="ea-perigo">Excluir área</button>');
+  const btnDesfazer=document.createElement('button');
+  btnDesfazer.className='ea-desfazer';btnDesfazer.textContent='↶ Desfazer';btnDesfazer.title='Desfazer a última ação (Ctrl+Z)';
+  btnDesfazer.disabled=true;cont.appendChild(btnDesfazer);L.DomEvent.disableClickPropagation(btnDesfazer);
+  const q=(b,a)=>b.querySelector(`[data-a="${a}"]`);
+  const sel=q(barraEdicao,'nivel');
+  sel.innerHTML=o.niveis().map(n=>`<option value="${n.id}">${n.label}</option>`).join('');
+
+  /* ---------- histórico geral (áreas criadas, editadas, excluídas) ---------- */
+  function retrato(){
+    const a=[];
+    o.grupo.eachLayer(l=>{const f=JSON.parse(JSON.stringify(o.original(l)));f.properties={...(f.properties||{}),level:o.nivelDe(l)};a.push(f);});
+    return a;
+  }
+  function empilhar(r){historico.push(r||retrato());if(historico.length>MAXH)historico.shift();btnDesfazer.disabled=false;}
+  function desfazerGeral(){
+    if(!historico.length){o.status('Nada para desfazer.');return;}
+    const r=historico.pop();btnDesfazer.disabled=!historico.length;
+    o.grupo.clearLayers();r.forEach(f=>o.adicionar(f,f.properties.level));
+    o.aposMudanca();o.status('Última ação desfeita.');
+  }
+  function zerarHistorico(){historico.length=0;btnDesfazer.disabled=true;}
+
+  /* ---------- edição de uma área ---------- */
+  /* O Leaflet.draw guarda a referência dos vértices; depois de setLatLngs é preciso atualizá-la. */
+  function ativarVertices(poly){
+    try{poly.editing.disable();}catch(e){}
+    poly.fire('revert-edited',{layer:poly});   // faz o Leaflet.draw reler os vértices atuais
+    poly.editing.enable();
+  }
+  function estiloEdicao(nivel){return {...o.estilo(nivel),fillOpacity:.45,dashArray:'6 4',weight:2.5};}
+  function iniciar(layer){
+    if(ed||o.desenhoAtivo())return;
+    const antes=retrato();
+    const f=o.original(layer),g=f&&f.geometry;
+    if(!g||(g.type!=='Polygon'&&g.type!=='MultiPolygon')){o.status('Esta área não pode ser editada.');return;}
+    const latlngs=L.GeoJSON.coordsToLatLngs(g.coordinates,g.type==='Polygon'?1:2);
+    const nivel=o.nivelDe(layer);
+    const poly=L.polygon(latlngs,estiloEdicao(nivel)).addTo(map);
+    o.grupo.removeLayer(layer);
+    ed={layer,poly,nivel,nivelInicial:nivel,antes,pilha:[copiar(poly.getLatLngs())],modo:'vertices',arrasto:null};
+    poly.on('edit',()=>{if(ed)ed.pilha.push(copiar(poly.getLatLngs()));});
+    poly.on('mousedown',inicioArrasto);
+    ativarVertices(poly);
+    sel.value=nivel;mostrarModo();
+    barraEdicao.style.display='flex';
+    o.status('Editando: arraste os vértices, arraste o ponto do meio de um lado para criar vértice, clique num vértice para removê-lo. Concluir = Enter, Cancelar = Esc.');
+  }
+  function mostrarModo(){
+    const b=q(barraEdicao,'mover');
+    b.classList.toggle('ea-ativo',ed&&ed.modo==='mover');
+    b.textContent=ed&&ed.modo==='mover'?'✎ Editar vértices':'✥ Mover';
+    cont.classList.toggle('ea-movendo',!!ed&&ed.modo==='mover');
+  }
+  function alternarMover(){
+    if(!ed)return;
+    if(ed.modo==='vertices'){ed.modo='mover';ed.poly.editing.disable();o.status('Mover: clique e arraste a área. Clique em "Editar vértices" para voltar aos vértices.');}
+    else{ed.modo='vertices';ativarVertices(ed.poly);o.status('Editando os vértices.');}
+    mostrarModo();
+  }
+  function inicioArrasto(e){
+    if(!ed||ed.modo!=='mover')return;
+    L.DomEvent.stop(e);
+    map.dragging.disable();
+    ed.arrasto={ini:e.latlng,base:copiar(ed.poly.getLatLngs())};
+    map.on('mousemove',arrastando);map.once('mouseup',fimArrasto);
+    document.addEventListener('mouseup',fimArrasto,{once:true});
+  }
+  function arrastando(e){
+    if(!ed||!ed.arrasto)return;
+    const a=ed.arrasto;ed.poly.setLatLngs(transladar(a.base,e.latlng.lat-a.ini.lat,e.latlng.lng-a.ini.lng));
+  }
+  function fimArrasto(){
+    map.off('mousemove',arrastando);map.dragging.enable();
+    if(!ed||!ed.arrasto)return;
+    ed.arrasto=null;ed.pilha.push(copiar(ed.poly.getLatLngs()));
+  }
+  function desfazerEdicao(){
+    if(!ed)return;
+    if(ed.pilha.length<2){o.status('Nada para desfazer nesta edição.');return;}
+    ed.pilha.pop();
+    const vertices=ed.modo==='vertices';
+    if(vertices)ed.poly.editing.disable();
+    ed.poly.setLatLngs(copiar(ed.pilha[ed.pilha.length-1]));
+    if(vertices)ativarVertices(ed.poly);
+    o.status('Alteração desfeita.');
+  }
+  function encerrar(){
+    if(!ed)return;
+    try{ed.poly.editing.disable();}catch(e){}
+    map.off('mousemove',arrastando);map.dragging.enable();
+    map.removeLayer(ed.poly);
+    ed=null;barraEdicao.style.display='none';mostrarModo();
+  }
+  function cancelar(){
+    if(!ed)return;
+    const layer=ed.layer;encerrar();
+    o.grupo.addLayer(layer);o.reordenar();
+    o.status('Edição cancelada. A área ficou como estava.');
+  }
+  function concluir(){
+    if(!ed)return;
+    if(ed.pilha.length<2&&ed.nivel===ed.nivelInicial){cancelar();o.status('Nenhuma alteração.');return;}
+    const f=ed.poly.toGeoJSON();f.properties={level:ed.nivel};
+    try{
+      if(window.turf&&turf.kinks&&turf.kinks(f).features.length){
+        alert('A área ficou com lados se cruzando. Ajuste os vértices (ou use Desfazer) antes de concluir.');return;
+      }
+    }catch(e){}
+    const antes=ed.antes;encerrar();
+    empilhar(antes);
+    const novas=o.adicionar(f,f.properties.level);
+    o.aposMudanca();
+    o.status(novas&&novas.length===0?'A área editada ficou fora de Minas Gerais e foi removida (use Desfazer para voltar).':'Área atualizada.');
+  }
+  function excluir(){
+    if(!ed)return;
+    const antes=ed.antes;encerrar();empilhar(antes);
+    o.aposMudanca();o.status('Área excluída (use Desfazer para voltar).');
+  }
+  sel.onchange=()=>{if(!ed)return;ed.nivel=sel.value;ed.poly.setStyle(estiloEdicao(ed.nivel));};
+  q(barraEdicao,'mover').onclick=alternarMover;
+  q(barraEdicao,'desfazer').onclick=desfazerEdicao;
+  q(barraEdicao,'concluir').onclick=concluir;
+  q(barraEdicao,'cancelar').onclick=cancelar;
+  q(barraEdicao,'excluir').onclick=()=>{if(confirm('Excluir esta área?'))excluir();};
+  btnDesfazer.onclick=()=>{if(ed)desfazerEdicao();else desfazerGeral();};
+
+  /* ---------- desenho novo ---------- */
+  map.on(L.Draw.Event.DRAWSTART,()=>{if(ed)cancelar();barraDesenho.style.display='flex';});
+  map.on(L.Draw.Event.DRAWSTOP,()=>{barraDesenho.style.display='none';});
+  function desfazerPonto(){
+    const dc=o.controleDesenho();
+    if(dc&&dc.enabled()&&dc._markers&&dc._markers.length){dc.deleteLastVertex();o.status('Último ponto removido.');}
+    else o.status('Nenhum ponto para desfazer.');
+  }
+  q(barraDesenho,'ponto').onclick=desfazerPonto;
+  q(barraDesenho,'cancelar').onclick=()=>{const dc=o.controleDesenho();if(dc)dc.disable();o.status('Desenho cancelado.');};
+
+  /* ---------- teclado ---------- */
+  document.addEventListener('keydown',e=>{
+    const t=e.target,campo=t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='z'||e.key==='Z')){
+      if(campo&&!ed)return;                         // Ctrl+Z normal dentro dos campos de texto
+      e.preventDefault();
+      if(o.desenhoAtivo())desfazerPonto(); else if(ed)desfazerEdicao(); else desfazerGeral();
+      return;
+    }
+    if(!ed||campo)return;
+    if(e.key==='Escape'){e.preventDefault();cancelar();}
+    else if(e.key==='Enter'){e.preventDefault();concluir();}
+  });
+
+  return {
+    /* chamar para cada camada criada: clique entra em edição */
+    ligar(layer){
+      layer.on('click',e=>{if(ed||o.desenhoAtivo())return;L.DomEvent.stop(e);iniciar(layer);});
+      if(layer.bindTooltip&&!layer.getTooltip())layer.bindTooltip('Clique para editar',{sticky:true,opacity:.85});
+    },
+    /* percorre as áreas, incluindo a que está em edição (com a forma de antes da edição):
+       assim "Salvar", PNG, KML e cálculos não perdem a área no meio de uma edição */
+    cadaCamada(fn){o.grupo.eachLayer(fn);if(ed)fn(ed.layer);},
+    empilhar,zerarHistorico,cancelar,
+    emEdicao:()=>!!ed
+  };
+}
+
+const editorAreas=criarEditorAreas({
+  map,grupo:drawnItems,
+  niveis:()=>LEVELS,
+  nivelDe:l=>l._severity,
+  original:l=>l._orig||Object.assign(l.toGeoJSON(),{properties:{level:l._severity}}),
+  estilo:id=>styleFor(levelById(id)),
+  adicionar:(f,id)=>addClippedFeatureToMap(f,id),
+  aposMudanca:()=>{refreshZOrder();recalc();},
+  reordenar:refreshZOrder,
+  status:setStatus,
+  controleDesenho:()=>drawControl,
+  desenhoAtivo:()=>!!(drawControl&&drawControl.enabled&&drawControl.enabled())
+});
 let drawControl=new L.Draw.Polygon(map,{allowIntersection:false,showArea:false,shapeOptions:styleFor(selected)});
 document.getElementById('drawBtn').onclick=()=>{drawControl=new L.Draw.Polygon(map,{allowIntersection:false,showArea:false,shapeOptions:styleFor(selected)});drawControl.enable();setStatus('Desenhando '+selected.label+'...');};
 map.on(L.Draw.Event.CREATED,e=>{
   const f=e.layer.toGeoJSON();f.properties={level:selected.id};
+  editorAreas.empilhar();
   const added=addClippedFeatureToMap(f,selected.id);
   recalc();
-  setStatus(added.length?'Área de '+selected.label+' criada e recortada no limite de Minas Gerais.':'O desenho ficou fora de Minas Gerais e não foi adicionado.');
+  setStatus(added.length?'Área de '+selected.label+' criada. Clique nela para editar; Ctrl+Z desfaz.':'O desenho ficou fora de Minas Gerais e não foi adicionado.');
 });
 map.on(L.Draw.Event.EDITED,()=>{reclipAllLayers();recalc();});
 function reclipAllLayers(){
@@ -81,8 +309,8 @@ function reclipAllLayers(){
   refreshZOrder();
 }
 
-function attachPopup(layer){layer.bindPopup(()=>{const lv=levelById(layer._severity);const wrap=document.createElement('div');wrap.innerHTML=`<b>${lv.label}</b><br><button id="editThis">Editar</button> <button id="delThis">Excluir</button>`;setTimeout(()=>{const d=document.getElementById('delThis');if(d)d.onclick=()=>{drawnItems.removeLayer(layer);map.closePopup();recalc();};const ed=document.getElementById('editThis');if(ed)ed.onclick=()=>{layer.editing.enable();setStatus('Editando '+lv.label+'. Clique no mapa quando terminar e depois use “Salvar neste navegador”.');};},0);return wrap;});}
-function drawnFeatures(){const arr=[];drawnItems.eachLayer(l=>{const f=l.toGeoJSON();f.properties={level:l._severity};arr.push(f)});return arr;}
+function attachPopup(layer){editorAreas.ligar(layer);}   // clique na área = edição (editor de áreas)
+function drawnFeatures(){const arr=[];editorAreas.cadaCamada(l=>{const f=l._orig?JSON.parse(JSON.stringify(l._orig)):l.toGeoJSON();f.properties={level:l._severity};arr.push(f)});return arr;}
 async function computeAssignments(){
  const data=await ensureMicroLoaded();
  const draw=clippedDrawnFeatures();
@@ -138,9 +366,9 @@ function setStatus(s){document.getElementById('status').textContent=s;}
 renderLists(Object.fromEntries(LEVELS.map(l=>[l.id,[]])));
 if('requestIdleCallback' in window){requestIdleCallback(()=>ensureMicroLoaded().catch(()=>{}),{timeout:5000});}
 else{setTimeout(()=>ensureMicroLoaded().catch(()=>{}),2500);}
-document.getElementById('saveBtn').onclick=()=>{localStorage.setItem('simge-tempo-severo-v012',JSON.stringify(clippedDrawnFeatures()));setStatus('Previsão salva neste navegador.');};
+document.getElementById('saveBtn').onclick=()=>{localStorage.setItem('simge-tempo-severo-v012',JSON.stringify(drawnFeatures()));setStatus('Previsão salva neste navegador.');};
 (function load(){try{const a=JSON.parse(localStorage.getItem('simge-tempo-severo-v012')||'[]');a.forEach(f=>addClippedFeatureToMap(f,f.properties.level));if(a.length){recalc();setStatus('Previsão salva anteriormente foi carregada.');}}catch(e){}})();
-document.getElementById('clearBtn').onclick=()=>{if(confirm('Apagar todos os polígonos desta previsão?')){drawnItems.clearLayers();localStorage.removeItem('simge-tempo-severo-v012');recalc();setStatus('Previsão limpa.');}};
+document.getElementById('clearBtn').onclick=()=>{if(confirm('Apagar todos os polígonos desta previsão?')){editorAreas.cancelar();editorAreas.empilhar();drawnItems.clearLayers();localStorage.removeItem('simge-tempo-severo-v012');recalc();setStatus('Previsão limpa (Ctrl+Z desfaz).');}};
 document.getElementById('copyBtn').onclick=async()=>{const g=window._groups||{};const lines=[];LEVELS.slice().reverse().forEach(l=>{if(g[l.id]?.length)lines.push(`${l.label}: ${g[l.id].map(pretty).join(', ')}.`)});await navigator.clipboard.writeText(lines.join('\n'));setStatus('Listas de microrregiões copiadas.');};
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));}
 function ringCoords(coords){return coords.map(c=>`${c[0]},${c[1]},0`).join(' ')}
