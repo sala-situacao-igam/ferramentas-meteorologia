@@ -829,6 +829,25 @@ async function relatorioFinal(snap,nomesLocais){
     .salvarRelatorioPlantao(snap.id,nome,b64,snap.prevB64||'');
 }
 
+/* Lembrete exibido depois que a passagem de plantão é salva. */
+const DESTINATARIOS_EMAIL_PLANTAO='Laís, Paula e Flavia';
+function lembrarEmailPlantao(id){
+  let dlg=document.getElementById('lembreteEmail');
+  if(!dlg){
+    dlg=document.createElement('dialog');
+    dlg.id='lembreteEmail';
+    dlg.setAttribute('aria-labelledby','lembreteEmailTitulo');
+    dlg.innerHTML='<h3 id="lembreteEmailTitulo">Lembrete: e-mail do plantão</h3>'+
+      '<p>Não esqueça de enviar o e-mail referente ao plantão <b data-id></b> para <b>'+esc(DESTINATARIOS_EMAIL_PLANTAO)+'</b>.</p>'+
+      '<div class="r"><button type="button" class="btn primary" data-ok>Ok, vou enviar</button></div>';
+    dlg.querySelector('[data-ok]').onclick=()=>dlg.close();
+    document.body.appendChild(dlg);
+  }
+  const b=dlg.querySelector('[data-id]');b.textContent=id||'';b.hidden=!id;
+  if(typeof dlg.showModal==='function'){if(!dlg.open)dlg.showModal();}
+  else alert('Não esqueça de enviar o e-mail referente ao plantão para '+DESTINATARIOS_EMAIL_PLANTAO+'.');
+}
+
 $('salvarPlantao').onclick=()=>{
   const d={};Object.entries(CAMPOS_PLANTAO).forEach(([k,id])=>d[k]=$(id).value);
   if(!d.responsavel.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').focus();return;}
@@ -851,6 +870,7 @@ $('salvarPlantao').onclick=()=>{
       carregarContexto();
       limparMapaPrevisoes();
       relatorioFinal(snap,nomesLocais);
+      lembrarEmailPlantao(snap.id);
     })
     .withFailureHandler(err=>{
       $('salvarPlantao').disabled=false;
