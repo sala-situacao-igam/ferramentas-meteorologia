@@ -1,4 +1,8 @@
-/* Alertas e passagem de plantão — código da página (v3.0.1).
+/* Alertas e passagem de plantão — código da página (v3.2, 06/10/2026).
+   v3.2: plantão único da equipe com turno (Diurno/Noturno) e subpastas AAAAMMDD/Turno no Drive;
+   relatório com os alertas de todos; aviso de duplicação (só alertas vigentes); Mapa de Previsões
+   obrigatório para encerrar (não é mais salvo à parte no Drive); botão "Trocar conta".
+   Usa as funções do arquivo Turnos.gs quando ele existe no Apps Script; sem ele, funciona como a v3.0.
    Fica no GitHub Pages, fora do Apps Script, como o app-drive.js das outras ferramentas:
    o Apps Script altera código JavaScript longo escrito dentro do HTML e quebrava a página.
    Depende de: window.BASE_DADOS, window.VERSAO_APP, window.alertasDados e window.alertasJsPdf
@@ -305,7 +309,7 @@ function openModal(){
   $('time').value=now();
   $('owner').value=$('pResp').value.trim();
   $('chips').innerHTML=[...state.selected].sort((a,b)=>a.localeCompare(b,'pt-BR')).map(x=>`<span class="chip">${esc(x)}</span>`).join('');
-  emitStatus('Ao emitir, o KML é salvo no Drive e o alerta entra na planilha.');
+  emitStatus('Plantão '+rotuloTurno(state.turno)+' (altere na aba Plantão). Ao emitir, o KML é salvo no Drive e o alerta entra na planilha.');
   $('kmlStatus').textContent='Sem preenchimento e com contorno vermelho fino, como o QGIS.';
   applyAlertPreset();$('modalback').style.display='flex';
 }
@@ -372,7 +376,8 @@ $('emit').onclick=()=>{
     data:$('pData').value||hojeLocal(),horario:a.start,duracao:a.duration,fim:a.end,tipo:a.type,
     fenomenos:a.phen,responsavel:a.owner,mensagem:a.message,
     municipios:cities.map(n=>{const p=featureByName.get(n).properties;return{nome:n,meso:p.meso||'',lat:p.label_lat,lon:p.label_lon};}),
-    kml:montarKml(cities,folder)
+    kml:montarKml(cities,folder),
+    turno:state.turno.turno,dataTurno:state.turno.data
   };
   $('emit').disabled=true;emitStatus('Salvando o KML no Drive e o alerta na planilha…');
   google.script.run
@@ -382,6 +387,8 @@ $('emit').onclick=()=>{
       a.meu=true;a.emitidoEm=Date.now();if(r&&r.plantaoId)state.plantaoId=r.plantaoId;
       a.expiresAt=expiryTimestamp(a.start,a.duration);
       a.linha=`${a.start}–${a.end} ${a.type}${a.phen.length?' ('+a.phen.join(', ')+')':''}: ${a.cities.join(', ')}`;
+      if(r&&r.turno)aplicarTurnoDoServidor(r.turno);
+      if(r&&r.avisoPasta)aviso(esc(r.avisoPasta),true);
       if(r&&r.plantaoId)carregarContexto();
       state.active.unshift(a);
       const date=dateBr();
@@ -400,7 +407,7 @@ $('emit').onclick=()=>{
       b.onclick=()=>{baixarKml(cities,folder);b.textContent='KML baixado';b.disabled=true;};
       $('emitStatus').appendChild(document.createElement('br'));$('emitStatus').appendChild(b);
     })
-    .registrarAlerta(payload);
+    [temFuncao('registrarAlertaTurno')?'registrarAlertaTurno':'registrarAlerta'](payload);
 };
 
 /* ---------------- cards dos alertas ---------------- */
@@ -419,6 +426,7 @@ function desenharAlertas(){
     a.cardEl=card;box.appendChild(card);
   });
   $('activeCount').textContent=state.active.length;
+  preencherAlertasGerados();
   atualizarCards();
   agendarRelatorio(true);
 }
@@ -496,7 +504,7 @@ document.querySelector('.tabs').addEventListener('keydown',e=>{if(e.key==='Arrow
 
 /* ---------------- Mapa de Previsões (imagem do formulário) ---------------- */
 let mapaPrevisoesB64='',mapaPrev={url:'',w:0,h:0};
-function limparMapaPrevisoes(){mapaPrevisoesB64='';mapaPrev={url:'',w:0,h:0};$('pMapaPrev').value='';$('pMapaPrevInfo').textContent='Sai no relatório em PDF, embaixo do mapa de alertas.';agendarRelatorio();}
+function limparMapaPrevisoes(){mapaPrevisoesB64='';mapaPrev={url:'',w:0,h:0};$('pMapaPrev').value='';$('pMapaPrevInfo').textContent=TXT_MAPA_PREV;agendarRelatorio();}
 $('pMapaPrev').onchange=()=>{
   const f=$('pMapaPrev').files[0];mapaPrevisoesB64='';mapaPrev={url:'',w:0,h:0};
   if(!f){limparMapaPrevisoes();return;}
@@ -520,7 +528,7 @@ const CAMPOS_PLANTAO={responsavel:'pResp',data:'pData',inicio:'pInicio',fim:'pFi
 function salvarRascunho(){
   try{
     const active=state.active.map(a=>{const c={...a};delete c.cardEl;return c;});
-    const r={campos:{},active,dailyRows:state.dailyRows,plantaoId:state.plantaoId,salvoEm:new Date().toISOString()};
+    const r={campos:{},active,dailyRows:state.dailyRows,plantaoId:state.plantaoId,turno:state.turno,salvoEm:new Date().toISOString()};
     Object.entries(CAMPOS_PLANTAO).forEach(([k,id])=>r.campos[k]=$(id).value);
     localStorage.setItem(CHAVE_RASCUNHO,JSON.stringify(r));
     $('rascunhoInfo').textContent='Rascunho guardado neste navegador às '+now()+'.';
@@ -533,6 +541,7 @@ function carregarRascunho(){
     if(Array.isArray(r.active))state.active=r.active.filter(a=>a&&Array.isArray(a.cities));
     if(Array.isArray(r.dailyRows))state.dailyRows=r.dailyRows;
     if(r.plantaoId)state.plantaoId=r.plantaoId;
+    if(r.plantaoId&&r.turno&&r.turno.turno&&r.turno.data)state.turno=r.turno;   // turno do rascunho só vale com plantão em andamento
     $('rascunhoInfo').textContent='Rascunho recuperado deste navegador.';
     return true;
   }catch(e){return false;}
@@ -616,14 +625,14 @@ function carimbo(d){const p=n=>String(n).padStart(2,'0');return d.getFullYear()+
 function dadosRelatorio(){
   const c={};Object.entries(CAMPOS_PLANTAO).forEach(([k,id])=>c[k]=$(id).value);
   const ids=new Set(state.active.map(a=>a.id).filter(Boolean));
-  return {id:state.plantaoId||'',geradoEm:new Date(),campos:c,nAlertas:ids.size,
-    nArquivos:1+(mapaPrev.url?1:0),pastaUrl:state.pastaUrl||'',mapa:'',prev:mapaPrev.url?{...mapaPrev}:null};
+  return {id:state.plantaoId||'',geradoEm:new Date(),campos:c,nAlertas:ids.size,turno:{...state.turno},
+    nArquivos:1,pastaUrl:state.pastaUrl||'',mapa:'',prev:mapaPrev.url?{...mapaPrev}:null};
 }
 function linhasDaTabela(d){
   const c=d.campos;
   return [
     ['ID do plantão',d.id||'(criado ao salvar)'],
-    ['Responsável',c.responsavel],['Data do plantão',dataBR(c.data)],['Início',c.inicio],['Fim',c.fim],
+    ['Responsável',c.responsavel],['Data do plantão',dataBR(c.data)],['Turno',d.turno&&d.turno.turno||''],['Início',c.inicio],['Fim',c.fim],
     ['Intercorrências',c.intercorrencias],['Ferramentas usadas',c.ferramentas],['Alertas gerados',c.alertas],
     ['Passagem de plantão (áreas suscetíveis e pendências)',c.passagem],
     ['Nº de alertas',String(d.nAlertas)],['Nº de arquivos',String(d.nArquivos)],
@@ -807,11 +816,15 @@ async function relatorioFinal(snap,nomesLocais){
   if(temServidor){
     await new Promise(ok=>google.script.run.withSuccessHandler(l=>{(l||[]).forEach(n=>nomes.add(n));ok();}).withFailureHandler(()=>ok()).municipiosDoPlantao(snap.id));
   }
+  if(temServidor&&temFuncao('prepararPastaTurno')&&snap.turno){
+    await new Promise(ok=>google.script.run.withSuccessHandler(p=>{if(p&&/^https:\/\//.test(p.url))snap.pastaUrl=p.url;ok();})
+      .withFailureHandler(()=>ok()).prepararPastaTurno(snap.turno.data,snap.turno.turno));
+  }
   snap.mapa=await mapaDoRelatorio(nomes,true);
   await Promise.race([window.alertasJsPdf,new Promise(ok=>setTimeout(ok,15000))]).catch(()=>{});
   let r;
   try{r=gerarPdf(snap);}catch(e){aviso('A passagem foi salva, mas o PDF não pôde ser gerado: '+esc(e&&e.message||e),true);return;}
-  const nome=carimbo(snap.geradoEm)+'_relatorio_plantao_'+snap.id+'.pdf';
+  const nome=nomeRelatorio(snap);
   ultimoRelatorio={nome,blob:r.blob};
   const pc=()=>baixarLocal(nome,r.blob);
   const jaBaixou=querPc();if(jaBaixou)pc();
@@ -826,7 +839,8 @@ async function relatorioFinal(snap,nomesLocais){
       if(!jaBaixou)pc();
       aviso('A passagem foi salva, mas o relatório não foi para o Drive ('+esc(e&&e.message?e.message:e)+').<br><b>O PDF foi baixado no PC</b> — confira a pasta Downloads.',true,[['Baixar de novo',pc]]);
     })
-    .salvarRelatorioPlantao(snap.id,nome,b64,snap.prevB64||'');
+    [temFuncao('salvarRelatorioPlantaoTurno')?'salvarRelatorioPlantaoTurno':'salvarRelatorioPlantao']
+      (snap.id,nome,b64,'',snap.turno&&snap.turno.data||'',snap.turno&&snap.turno.turno||'');   // o PNG já vai dentro do PDF
 }
 
 /* Lembrete exibido depois que a passagem de plantão é salva. */
@@ -848,13 +862,14 @@ function lembrarEmailPlantao(id){
   else alert('Não esqueça de enviar o e-mail referente ao plantão para '+DESTINATARIOS_EMAIL_PLANTAO+'.');
 }
 
-$('salvarPlantao').onclick=()=>{
+function salvarPassagemAgora(){
   const d={};Object.entries(CAMPOS_PLANTAO).forEach(([k,id])=>d[k]=$(id).value);
+  d.turno=state.turno.turno;d.dataTurno=state.turno.data;
   if(!d.responsavel.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').focus();return;}
   if(!d.data){status('Preencha a data do plantão.','erro');$('pData').focus();return;}
   d.alertaIds=state.active.map(a=>a.id).filter(id=>id&&!/^local_/.test(id));
   d.kmls=state.active.map(a=>a.kmlUrl).filter(Boolean);
-  const snap=dadosRelatorio();snap.prevB64=mapaPrevisoesB64;     // retrato do formulário antes de limpar
+  const snap=dadosRelatorio();     // retrato do formulário antes de limpar
   const nomesLocais=[...municipiosAlertados()];
   $('salvarPlantao').disabled=true;status('Salvando a passagem de plantão…');
   google.script.run
@@ -862,9 +877,9 @@ $('salvarPlantao').onclick=()=>{
       $('salvarPlantao').disabled=false;
       snap.id=(r&&r.id)||snap.id;snap.geradoEm=new Date();
       if(r&&r.alertas!=null)snap.nAlertas=r.alertas;
-      if(r&&r.arquivos!=null)snap.nArquivos=r.arquivos+1+(snap.prev?1:0);   // + relatório (+ mapa de previsões)
+      if(r&&r.arquivos!=null)snap.nArquivos=r.arquivos+1;   // + relatório (o Mapa de Previsões vai dentro do PDF)
       Object.values(CAMPOS_PLANTAO).forEach(id=>$(id).value='');
-      $('pData').value=hojeLocal();
+      turnoServidor=null;state.turno=turnoPeloRelogio();mostrarTurno();preencherHorariosTurno();
       state.active=[];state.dailyRows=[];state.plantaoId='';state.selected.clear();desenharAlertas();updateSelection();apagarRascunho();
       status('Passagem do plantão '+(snap.id||'')+' salva. O próximo plantonista verá este registro ao abrir.','ok');
       carregarContexto();
@@ -877,6 +892,22 @@ $('salvarPlantao').onclick=()=>{
       status('Não foi possível salvar: '+(err&&err.message?err.message:err)+' Seus dados continuam aqui. Se precisar, use “Baixar PDF no PC”.','erro');
     })
     .salvarPlantao(d);
+}
+$('salvarPlantao').onclick=()=>{
+  if(!$('pResp').value.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').focus();return;}
+  if(!mapaPrev.url){
+    status('Anexe o Mapa de Previsões (PNG) antes de encerrar o plantão.','erro');
+    aviso('Para encerrar o plantão, anexe a imagem do <b>Mapa de Previsões (PNG)</b> no formulário.',true);
+    $('pMapaPrev').focus();return;
+  }
+  $('salvarPlantao').disabled=true;status('Conferindo os alertas da equipe…');
+  sincronizarAlertas(()=>{
+    $('salvarPlantao').disabled=false;
+    const outros=[...new Set(state.active.filter(a=>!podeExcluir(a)).map(a=>a.owner||a.email).filter(Boolean))];
+    if(outros.length&&!confirm(textList(outros)+(outros.length>1?' também emitiram':' também emitiu')+
+      ' alertas neste plantão ('+rotuloTurno(state.turno)+').\n\nEncerrar o plantão para todos?')){status('Encerramento cancelado.');return;}
+    salvarPassagemAgora();
+  });
 };
 
 function carregarContexto(){
@@ -911,14 +942,22 @@ function expiraEm(registradoEm,start,dur){
   if(ini-reg>12*3600000)ini-=86400000; else if(reg-ini>12*3600000)ini+=86400000;   // alerta perto da meia-noite
   return ini+durationMinutes(dur||'02:00')*60000;
 }
-let sincronizando=false;
-/* Busca na planilha os alertas de toda a equipe no plantão em andamento. */
-function sincronizarAlertas(){
-  if(sincronizando||!temServidor)return;
+let sincronizando=false,syncCbs=[];
+function fimSync(){const l=syncCbs;syncCbs=[];l.forEach(f=>{try{f();}catch(e){console.error(e);}});}
+/* Busca na planilha os alertas de toda a equipe no plantão em andamento.
+   cb (opcional) roda quando a busca termina, com ou sem sucesso (no máximo em 15 s). */
+function sincronizarAlertas(cb){
+  if(typeof cb==='function'){
+    let feito=false;const uma=()=>{if(!feito){feito=true;cb();}};
+    syncCbs.push(uma);setTimeout(uma,15000);
+  }
+  if(!temServidor){fimSync();return;}
+  if(sincronizando)return;
   sincronizando=true;
   google.script.run
     .withSuccessHandler(r=>{
-      sincronizando=false;if(!r)return;
+      sincronizando=false;if(!r){fimSync();return;}
+      if(r.turno)aplicarTurnoDoServidor(r.turno);
       if(r.email)state.meuEmail=String(r.email).toLowerCase();
       const antes=state.plantaoId,agora=r.plantaoId||'';
       const locais=new Map(state.active.map(a=>[a.id,a]));
@@ -952,16 +991,174 @@ function sincronizarAlertas(){
         carregarContexto();
       }
       desenharAlertas();pintarMapa();salvarRascunho();
+      fimSync();
     })
-    .withFailureHandler(()=>{sincronizando=false;})   // sem conexão: mantém o que está na tela
-    .alertasDoPlantaoAtual();
+    .withFailureHandler(()=>{sincronizando=false;fimSync();})   // sem conexão: mantém o que está na tela
+    [temFuncao('alertasDoPlantaoAtualTurno')?'alertasDoPlantaoAtualTurno':'alertasDoPlantaoAtual']();
 }
 setInterval(sincronizarAlertas,60000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)sincronizarAlertas();});
 
+
+/* ===================== v3.2: turno, duplicação, trocar conta ===================== */
+function temFuncao(n){try{return temServidor&&typeof google.script.run[n]==='function';}catch(e){return false;}}
+
+/* ---- horário de Brasília (Minas Gerais), independente do relógio do computador ---- */
+const FUSO_MG='America/Sao_Paulo';
+function partesMG(d){
+  const o={};
+  new Intl.DateTimeFormat('en-CA',{timeZone:FUSO_MG,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'})
+    .formatToParts(d||new Date()).forEach(p=>o[p.type]=p.value);
+  return o;
+}
+function isoMG(d){const o=partesMG(d);return o.year+'-'+o.month+'-'+o.day;}
+function hhmmMG(d){const o=partesMG(d);return o.hour+o.minute;}
+
+/* ---- turno do plantão ---- */
+const TURNOS={Diurno:{inicio:'07:00',fim:'19:00'},Noturno:{inicio:'19:00',fim:'07:00'}};
+/* 7h–19h = Diurno do dia; 19h–24h = Noturno do dia; 0h–7h = Noturno do dia anterior (data de início). */
+function turnoPeloRelogio(){
+  const agora=new Date(),h=Number(partesMG(agora).hour);
+  if(h>=7&&h<19)return {turno:'Diurno',data:isoMG(agora)};
+  return {turno:'Noturno',data:isoMG(h<7?new Date(agora.getTime()-12*3600000):agora)};
+}
+function rotuloTurno(t){return t&&t.turno?dataBR(t.data)+' – '+t.turno:'(turno não escolhido)';}
+function nomeRelatorio(snap){
+  const t=snap.turno||turnoPeloRelogio();
+  return 'relatorio_'+String(t.data||isoMG()).replace(/-/g,'')+'_'+String(t.turno||'turno').toLowerCase()+'_'+hhmmMG(snap.geradoEm||new Date())+'.pdf';
+}
+state.turno=turnoPeloRelogio();
+let turnoServidor=null;   // turno gravado no plantão (por quem emitiu o primeiro alerta)
+
+/* seletor "Plantão" ao lado de Início/Fim, criado aqui para não precisar mexer no Alertas.html */
+(function criarSeletorTurno(){
+  if($('pTurno')||!$('pInicio'))return;
+  const ref=$('pInicio').parentElement;
+  const box=document.createElement(ref.tagName==='LABEL'?'div':ref.tagName);
+  box.className=ref.className;
+  box.innerHTML='<label for="pTurno">Plantão</label>'+
+    '<select id="pTurno"><option value="Diurno">Diurno (7h às 19h)</option><option value="Noturno">Noturno (19h às 7h)</option></select>'+
+    '<div id="pTurnoInfo" class="hint" style="font-size:12px;margin-top:3px"></div>';
+  ref.parentElement.insertBefore(box,ref);
+})();
+function mostrarTurno(){
+  if(!$('pTurno'))return;
+  $('pTurno').value=state.turno.turno;
+  if(state.turno.data)$('pData').value=state.turno.data;
+  const info=$('pTurnoInfo');
+  if(info)info.textContent=turnoServidor&&turnoServidor.por&&state.plantaoId
+    ?'Turno definido no primeiro alerta do plantão ('+turnoServidor.por+'). Os arquivos vão para a pasta '+String(state.turno.data).replace(/-/g,'')+'/'+state.turno.turno+'.'
+    :'Os arquivos vão para a pasta '+String(state.turno.data).replace(/-/g,'')+'/'+state.turno.turno+' no Drive.';
+}
+function preencherHorariosTurno(){
+  const h=TURNOS[state.turno.turno];if(!h)return;
+  $('pInicio').value=h.inicio;$('pFim').value=h.fim;
+}
+/* o turno gravado no servidor vale para todos do plantão */
+function aplicarTurnoDoServidor(t){
+  if(!t||!t.turno||!t.data)return;
+  turnoServidor=t;
+  const mudou=t.turno!==state.turno.turno||t.data!==state.turno.data;
+  state.turno={turno:t.turno,data:t.data};
+  if(mudou){preencherHorariosTurno();salvarRascunho();agendarRelatorio();}
+  mostrarTurno();
+}
+function alterarTurno(novo){
+  const antes={...state.turno};
+  if(state.plantaoId&&turnoServidor&&temFuncao('definirTurnoPlantao')){
+    if(!confirm('O plantão '+state.plantaoId+' já está como '+rotuloTurno(antes)+'.\n\n'+
+      'Mudar para '+rotuloTurno(novo)+' vale para toda a equipe neste plantão. Os próximos arquivos irão para a nova pasta '+
+      '(os já salvos continuam onde estão).\n\nConfirmar a mudança?')){mostrarTurno();return;}
+    google.script.run.withSuccessHandler(t=>{aplicarTurnoDoServidor(t);status('Turno do plantão alterado para '+rotuloTurno(t)+'.','ok');})
+      .withFailureHandler(e=>{state.turno=antes;mostrarTurno();preencherHorariosTurno();status('Não foi possível alterar o turno: '+(e&&e.message||e),'erro');})
+      .definirTurnoPlantao(state.plantaoId,novo.data,novo.turno);
+  }
+  state.turno=novo;preencherHorariosTurno();mostrarTurno();salvarRascunho();agendarRelatorio();
+}
+if($('pTurno')){
+  $('pTurno').addEventListener('change',()=>alterarTurno({turno:$('pTurno').value,data:$('pData').value||state.turno.data}));
+  $('pData').addEventListener('change',()=>{if($('pData').value&&$('pData').value!==state.turno.data)alterarTurno({turno:state.turno.turno,data:$('pData').value});});
+}
+
+/* ---- "Alertas gerados": lista automática com os alertas de toda a equipe ---- */
+function linhaAlerta(a){
+  const ph=(a.phen&&a.phen.length)?' ('+a.phen.join(', ')+')':'';
+  return (a.start||'')+'–'+(a.end||'')+' '+(a.type||'')+ph+': '+(a.cities||[]).join(', ')+(a.owner?' — '+a.owner:'');
+}
+function preencherAlertasGerados(){
+  const el=$('pAlertas');if(!el)return;
+  const lista=state.active.slice().sort((x,y)=>(x.expiresAt||0)-(y.expiresAt||0));
+  el.value=lista.map(linhaAlerta).join('\n');
+  el.readOnly=true;
+  el.title='Preenchido automaticamente com os alertas de todos os plantonistas deste plantão.';
+}
+
+/* ---- aviso de duplicação: só para alertas ainda vigentes ---- */
+function alertasVigentesEm(cities){
+  const t=Date.now(),alvo=new Set(cities),out=[];
+  state.active.forEach(a=>{
+    if(a.expiresAt&&a.expiresAt<=t)return;            // vencido: pode emitir de novo
+    const em=(a.cities||[]).filter(n=>alvo.has(n));
+    if(em.length)out.push({a,em});
+  });
+  return out;
+}
+const emitirAgora=$('emit').onclick;
+$('emit').onclick=()=>{
+  const cities=[...state.selected];if(!cities.length)return;
+  if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test($('time').value.trim())){emitirAgora();return;}   // a própria emissão mostra o erro
+  $('emit').disabled=true;emitStatus('Conferindo os alertas vigentes da equipe…');
+  sincronizarAlertas(()=>{
+    $('emit').disabled=false;
+    const dup=alertasVigentesEm(cities);
+    if(dup.length){
+      const linhas=dup.slice(0,12).map(({a,em})=>'• '+em.join(', ')+': '+(a.type||'alerta')+' até '+(a.end||'?')+(a.owner?' ('+a.owner+')':''));
+      if(dup.length>12)linhas.push('• … e mais '+(dup.length-12)+' alerta(s)');
+      if(!confirm('Já há alerta VIGENTE para:\n\n'+linhas.join('\n')+'\n\nEmitir mesmo assim?')){
+        emitStatus('Emissão cancelada. Tire do alerta os municípios que já estão cobertos, se for o caso.');return;
+      }
+    }
+    emitirAgora();
+  });
+};
+
+/* ---- Mapa de Previsões: obrigatório para encerrar ---- */
+const TXT_MAPA_PREV='Obrigatório para encerrar o plantão. Sai no relatório em PDF, embaixo do mapa de alertas (não é salvo à parte no Drive).';
+(function ajustarRotuloMapaPrev(){
+  const inp=$('pMapaPrev');if(!inp)return;
+  const lab=document.querySelector('label[for="pMapaPrev"]')||inp.closest('label')||(inp.parentElement&&inp.parentElement.querySelector('label'));
+  if(lab){
+    const w=document.createTreeWalker(lab,NodeFilter.SHOW_TEXT);let n;
+    while((n=w.nextNode()))if(/opcional/i.test(n.nodeValue))n.nodeValue=n.nodeValue.replace(/,?\s*opcional/i,', obrigatório ao encerrar');
+  }
+  if(!mapaPrev.url&&$('pMapaPrevInfo'))$('pMapaPrevInfo').textContent=TXT_MAPA_PREV;
+})();
+
+/* ---- botão "Trocar conta" ---- */
+function temAlertaNaoEmitido(){
+  return state.selected.size>0||state.drawing||$('modalback').style.display==='flex';
+}
+(function criarTrocarConta(){
+  if(!temFuncao('urlDoApp')||!$('quem'))return;
+  google.script.run.withSuccessHandler(url=>{
+    if(!/^https:\/\//.test(url||''))return;
+    const a=document.createElement('a');
+    a.id='trocarConta';a.className='btn small';a.target='_top';a.rel='noopener';
+    a.href='https://accounts.google.com/AccountChooser?continue='+encodeURIComponent(url);
+    a.textContent='Trocar conta';a.style.marginLeft='8px';
+    a.title='Sair desta conta e entrar com outra. Alertas já emitidos não se perdem.';
+    a.onclick=e=>{
+      if(temAlertaNaoEmitido()&&!confirm('Há um alerta não emitido (municípios selecionados ou janela de emissão aberta).\n\n'+
+        'Ele será perdido ao trocar de conta. Os alertas já emitidos continuam salvos.\n\nDeseja sair mesmo assim?'))e.preventDefault();
+    };
+    $('quem').insertAdjacentElement('afterend',a);
+  }).withFailureHandler(()=>{}).urlDoApp();
+})();
+
 /* ---------------- início ---------------- */
-carregarRascunho();
-if(!$('pData').value)$('pData').value=hojeLocal();
+const temRascunho=carregarRascunho();
+if(!temRascunho||!$('pInicio').value)preencherHorariosTurno();
+mostrarTurno();
 aplicarLimites();desenharAlertas();updateSelection();applyView();carregarContexto();sincronizarAlertas();
 try{if(sessionStorage.getItem('alertas:aba')==='plantao')mostrarAba('plantao');}catch(e){}
 window.alertasJsPdf.then(()=>{_relDoc=null;agendarRelatorio();},()=>{});   // refaz a prévia com as medidas do PDF
