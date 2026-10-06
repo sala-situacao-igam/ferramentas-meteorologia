@@ -3,7 +3,9 @@
    2026.10.05.2: mapa final no layout da Previsão diária (assets/layout-mapa.js).
    2026.10.06.1: edição das áreas (clique na área: vértices, mover, trocar nível, Concluir/Cancelar),
    Ctrl+Z / Desfazer (ponto do desenho, alteração da edição ou última ação) e a área guarda o desenho
-   original (o recorte em MG é feito só para mostrar e calcular). */
+   original (o recorte em MG é feito só para mostrar e calcular).
+   2026.10.06.2: contorno das mesorregiões não captura mais o clique (ele fica por cima das áreas e
+   impedia clicar nelas para editar). */
 
 const LEVELS=[
  {id:'Nivel0',label:'Tempestades não severas',rank:0,fill:'#D2F7CB',opacity:1,stroke:'#5BCB59'},
@@ -38,7 +40,7 @@ function ensureMicroLoaded(){
   return microLoadPromise;
 }
 const drawnItems=new L.FeatureGroup().addTo(map);
-const mesoDisplay=L.geoJSON(MESO,{style:{color:'#4b5563',weight:1.15,fillOpacity:0}}).addTo(map);
+const mesoDisplay=L.geoJSON(MESO,{interactive:false,style:{color:'#4b5563',weight:1.15,fillOpacity:0}}).addTo(map);   // só desenho: não captura o clique (fica por cima das áreas)
 map.fitBounds(mesoDisplay.getBounds(),{padding:[25,25]});
 L.geoJSON(CIDADES,{pointToLayer:(f,ll)=>L.circleMarker(ll,{radius:2.4,color:'#111',weight:1,fillColor:'#fff',fillOpacity:1}),onEachFeature:(f,l)=>{const n=f.properties.NM_LOCAL_1||f.properties.NM_MUNICIP;l.bindTooltip(n,{permanent:true,direction:'right',offset:[3,0],className:'city-label'});}}).addTo(map);
 const microPriorityLayer={clearLayers(){},addData(){}}; // microrregiões ficam somente para cálculo textual
