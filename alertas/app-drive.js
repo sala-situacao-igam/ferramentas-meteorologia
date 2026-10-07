@@ -1,4 +1,7 @@
-/* Alertas e passagem de plantão — código da página (v3.3, 06/10/2026).
+/* Alertas e passagem de plantão — código da página (v3.4, 07/10/2026).
+   v3.4: ao salvar a passagem, o PDF do relatório sempre baixa no PC e vai para o Drive, e a página
+   pergunta "Enviar e-mail para Flávia, Laís e Paula?". Sim = envia (Email.gs); Não = só PC e Drive.
+   Sem o Email.gs no Apps Script, a página mostra o lembrete antigo de e-mail.
    v3.3: cor do município = alerta VIGENTE tem prioridade sobre o vencido (novo alerta volta a azul);
    alerta excluído fica na planilha como "Excluído" e sai de mapa, lista, PDF e TXT;
    TXT do turno montado a partir da planilha (alertas de toda a equipe, sem os excluídos).
@@ -859,24 +862,77 @@ async function relatorioFinal(snap,nomesLocais){
   snap.mapa=await mapaDoRelatorio(nomes,true);
   await Promise.race([window.alertasJsPdf,new Promise(ok=>setTimeout(ok,15000))]).catch(()=>{});
   let r;
-  try{r=gerarPdf(snap);}catch(e){aviso('A passagem foi salva, mas o PDF não pôde ser gerado: '+esc(e&&e.message||e),true);return;}
+  try{r=gerarPdf(snap);}catch(e){aviso('A passagem foi salva, mas o PDF não pôde ser gerado: '+esc(e&&e.message||e),true);lembrarEmailPlantao(snap.id);return;}
   const nome=nomeRelatorio(snap);
   ultimoRelatorio={nome,blob:r.blob};
   const pc=()=>baixarLocal(nome,r.blob);
-  const jaBaixou=querPc();if(jaBaixou)pc();
+  pc();   // v3.4: o relatório final sempre baixa no PC (com ou sem e-mail)
   const b64=await new Promise((ok,no)=>{const fr=new FileReader();fr.onload=()=>ok(String(fr.result).split(',')[1]||'');fr.onerror=no;fr.readAsDataURL(r.blob);});
-  google.script.run
-    .withSuccessHandler(s=>{
-      const url=/^https:\/\//.test(s&&s.url)?s.url:'#';
-      aviso('Relatório salvo no Drive: <a href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(s&&s.nome||nome)+'</a>'+
-        (snap.mapa?'':'<br>(sem a imagem do mapa)')+(jaBaixou?'<br>Cópia baixada no PC.':''),false,jaBaixou?[]:[['Baixar no PC',pc]]);
-    })
-    .withFailureHandler(e=>{
-      if(!jaBaixou)pc();
-      aviso('A passagem foi salva, mas o relatório não foi para o Drive ('+esc(e&&e.message?e.message:e)+').<br><b>O PDF foi baixado no PC</b> — confira a pasta Downloads.',true,[['Baixar de novo',pc]]);
-    })
+  const t=snap.turno||turnoPeloRelogio();
+  // 1) Drive: salva sempre (em segundo plano, enquanto a pergunta do e-mail está na tela)
+  const drive=new Promise(ok=>google.script.run
+    .withSuccessHandler(s=>ok({ok:true,s}))
+    .withFailureHandler(e=>ok({ok:false,e}))
     [temFuncao('salvarRelatorioPlantaoTurno')?'salvarRelatorioPlantaoTurno':'salvarRelatorioPlantao']
-      (snap.id,nome,b64,'',snap.turno&&snap.turno.data||'',snap.turno&&snap.turno.turno||'');   // o PNG já vai dentro do PDF
+      (snap.id,nome,b64,'',t.data||'',t.turno||''));   // o PNG já vai dentro do PDF
+  // 2) E-mail: só se a pessoa responder "Sim" (o "Não" serve para os testes)
+  let envio=null;
+  if(temFuncao('enviarRelatorioPorEmail')){
+    if(await perguntarEnvioEmail(t)){
+      aviso('Enviando o relatório por e-mail para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>…');
+      envio=await enviarEmailRelatorio(snap.id,nome,b64,t);
+    }
+  }else lembrarEmailPlantao(snap.id);   // servidor ainda sem o Email.gs: mantém o lembrete antigo
+  const d=await drive;
+  const partes=[];let erro=false;const acoes=[['Baixar de novo',pc]];
+  if(d.ok){
+    const url=/^https:\/\//.test(d.s&&d.s.url)?d.s.url:'#';
+    partes.push('Relatório salvo no Drive: <a href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(d.s&&d.s.nome||nome)+'</a>'+(snap.mapa?'':' (sem a imagem do mapa)'));
+  }else{erro=true;partes.push('O relatório <b>não</b> foi para o Drive ('+esc(d.e&&d.e.message?d.e.message:d.e)+').');}
+  partes.push('PDF baixado no PC — confira a pasta Downloads.');
+  if(envio&&envio.ok)partes.push('E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>'+(envio.x&&envio.x.cc?' (cópia para você)':'')+'.');
+  else if(envio){
+    erro=true;
+    partes.push('<b>O e-mail NÃO foi enviado</b> ('+esc(envio.e&&envio.e.message?envio.e.message:envio.e)+'). Tente de novo ou envie o PDF manualmente.');
+    let enviando=false;
+    acoes.push(['Tentar enviar o e-mail de novo',async()=>{
+      if(enviando)return;enviando=true;
+      const x=await enviarEmailRelatorio(snap.id,nome,b64,t);enviando=false;
+      aviso(x.ok?'E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>.':'<b>O e-mail NÃO foi enviado</b> ('+esc(x.e&&x.e.message?x.e.message:x.e)+'). Envie o PDF manualmente.',!x.ok,[['Baixar de novo',pc]]);
+    }]);
+  }else if(temFuncao('enviarRelatorioPorEmail'))partes.push('E-mail não enviado (você escolheu "Não").');
+  aviso(partes.join('<br>'),erro,acoes);
+}
+
+/* ---- v3.4: envio do relatório por e-mail (função enviarRelatorioPorEmail do Email.gs) ---- */
+const NOMES_EMAIL_PLANTAO='Flávia, Laís e Paula';   // só o texto da pergunta; os endereços ficam no Email.gs
+function enviarEmailRelatorio(id,nome,b64,t){
+  return new Promise(ok=>google.script.run
+    .withSuccessHandler(x=>ok({ok:true,x}))
+    .withFailureHandler(e=>ok({ok:false,e}))
+    .enviarRelatorioPorEmail(id,nome,b64,t.data||'',t.turno||''));
+}
+/* Pergunta Sim/Não. Fechar com Esc ou no X conta como "Não". O botão em foco é o "Não", para evitar envio sem querer. */
+function perguntarEnvioEmail(t){
+  return new Promise(resolver=>{
+    let dlg=document.getElementById('perguntaEmail');
+    if(!dlg){
+      dlg=document.createElement('dialog');
+      dlg.id='perguntaEmail';
+      dlg.setAttribute('aria-labelledby','perguntaEmailTitulo');
+      dlg.innerHTML='<h3 id="perguntaEmailTitulo">Enviar e-mail para '+esc(NOMES_EMAIL_PLANTAO)+'?</h3>'+
+        '<p>Relatório do plantão <b data-rotulo></b>.<br>Se for só um teste da ferramenta, escolha <b>Não</b>: o PDF fica apenas no PC (e no Drive).</p>'+
+        '<div class="r"><button type="button" class="btn" data-nao>Não</button> <button type="button" class="btn primary" data-sim>Sim, enviar</button></div>';
+      document.body.appendChild(dlg);
+    }
+    dlg.querySelector('[data-rotulo]').textContent=(t&&t.data?t.data:'')+(t&&t.turno?' – '+t.turno:'');
+    let resposta=false;
+    dlg.querySelector('[data-sim]').onclick=()=>{resposta=true;dlg.close();};
+    dlg.querySelector('[data-nao]').onclick=()=>{resposta=false;dlg.close();};
+    dlg.onclose=()=>resolver(resposta);
+    if(typeof dlg.showModal==='function'){if(!dlg.open)dlg.showModal();dlg.querySelector('[data-nao]').focus();}
+    else resolver(confirm('Enviar e-mail para '+NOMES_EMAIL_PLANTAO+'?\n\nOK = Sim, enviar   ·   Cancelar = Não'));
+  });
 }
 
 /* Lembrete exibido depois que a passagem de plantão é salva. */
@@ -920,8 +976,7 @@ function salvarPassagemAgora(){
       status('Passagem do plantão '+(snap.id||'')+' salva. O próximo plantonista verá este registro ao abrir.','ok');
       carregarContexto();
       limparMapaPrevisoes();
-      relatorioFinal(snap,nomesLocais);
-      lembrarEmailPlantao(snap.id);
+      relatorioFinal(snap,nomesLocais);   // v3.4: a pergunta do e-mail (ou o lembrete antigo) vem de dentro do relatorioFinal
     })
     .withFailureHandler(err=>{
       $('salvarPlantao').disabled=false;
