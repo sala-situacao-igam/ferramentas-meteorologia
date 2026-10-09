@@ -1,4 +1,8 @@
-/* Alertas e passagem de plantão — código da página (v3.4, 07/10/2026).
+/* Alertas e passagem de plantão — código da página (v3.4.1, 09/10/2026).
+   v3.4.1: proteção de turno — aviso quando o plantão aberto é de um turno que já terminou (ex.: Diurno
+   ainda aberto às 19h30: os alertas entrariam no relatório do Diurno); confirmação ao marcar um turno
+   diferente do horário atual; aviso ao encerrar plantão sem nenhum alerta; mensagem clara quando a conta
+   ainda não autorizou o envio de e-mail.
    v3.4: ao salvar a passagem, o PDF do relatório sempre baixa no PC e vai para o Drive, e a página
    pergunta "Enviar e-mail para Flávia, Laís e Paula?". Sim = envia (Email.gs); Não = só PC e Drive.
    Sem o Email.gs no Apps Script, a página mostra o lembrete antigo de e-mail.
@@ -281,7 +285,7 @@ function atualizarCards(){
     if(s)s.textContent=c==='expired'?'Prazo vencido':(c==='expiring'?'Perto de vencer':'Vigente');
   });
 }
-setInterval(()=>{pintarMapa();atualizarCards();},30000);
+setInterval(()=>{pintarMapa();atualizarCards();try{mostrarTurno();}catch(e){}},30000);
 
 function toggleCity(name){state.selected.has(name)?state.selected.delete(name):state.selected.add(name);updateSelection();}
 function updateSelection(){
@@ -893,19 +897,28 @@ async function relatorioFinal(snap,nomesLocais){
   if(envio&&envio.ok)partes.push('E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>'+(envio.x&&envio.x.cc?' (cópia para você)':'')+'.');
   else if(envio){
     erro=true;
-    partes.push('<b>O e-mail NÃO foi enviado</b> ('+esc(envio.e&&envio.e.message?envio.e.message:envio.e)+'). Tente de novo ou envie o PDF manualmente.');
+    partes.push('<b>O e-mail NÃO foi enviado</b> '+motivoEmail(envio.e)+' Envie o PDF manualmente desta vez.');
     let enviando=false;
     acoes.push(['Tentar enviar o e-mail de novo',async()=>{
       if(enviando)return;enviando=true;
       const x=await enviarEmailRelatorio(snap.id,nome,b64,t);enviando=false;
-      aviso(x.ok?'E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>.':'<b>O e-mail NÃO foi enviado</b> ('+esc(x.e&&x.e.message?x.e.message:x.e)+'). Envie o PDF manualmente.',!x.ok,[['Baixar de novo',pc]]);
+      aviso(x.ok?'E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>.':'<b>O e-mail NÃO foi enviado</b> '+motivoEmail(x.e)+' Envie o PDF manualmente.',!x.ok,[['Baixar de novo',pc]]);
     }]);
   }else if(temFuncao('enviarRelatorioPorEmail'))partes.push('E-mail não enviado (você escolheu "Não").');
   aviso(partes.join('<br>'),erro,acoes);
 }
 
 /* ---- v3.4: envio do relatório por e-mail (função enviarRelatorioPorEmail do Email.gs) ---- */
-const NOMES_EMAIL_PLANTAO='Flávia, Laís e Paula';   // só o texto da pergunta; os endereços ficam no Email.gs
+const NOMES_EMAIL_PLANTAO='Flávia, Laís e Paula';
+/* Explica o erro do envio. Falta de permissão (script.send_mail) não adianta "tentar de novo":
+   a conta precisa autorizar o envio de e-mail abrindo o link do app de novo. */
+function motivoEmail(e){
+  const m=String(e&&e.message?e.message:e||'');
+  if(/send_mail|MailApp|permiss/i.test(m))
+    return '— sua conta ainda não autorizou o app a enviar e-mail. <b>Feche esta aba, abra o link do app de novo</b> e aceite a permissão '+
+      '"Enviar e-mail como você". Se a tela de permissão não aparecer, avise quem administra o app.';
+  return '('+esc(m)+').';
+}   // só o texto da pergunta; os endereços ficam no Email.gs
 function enviarEmailRelatorio(id,nome,b64,t){
   return new Promise(ok=>google.script.run
     .withSuccessHandler(x=>ok({ok:true,x}))
@@ -925,7 +938,7 @@ function perguntarEnvioEmail(t){
         '<div class="r"><button type="button" class="btn" data-nao>Não</button> <button type="button" class="btn primary" data-sim>Sim, enviar</button></div>';
       document.body.appendChild(dlg);
     }
-    dlg.querySelector('[data-rotulo]').textContent=(t&&t.data?t.data:'')+(t&&t.turno?' – '+t.turno:'');
+    dlg.querySelector('[data-rotulo]').textContent=rotuloTurno(t);
     let resposta=false;
     dlg.querySelector('[data-sim]').onclick=()=>{resposta=true;dlg.close();};
     dlg.querySelector('[data-nao]').onclick=()=>{resposta=false;dlg.close();};
@@ -994,6 +1007,14 @@ $('salvarPlantao').onclick=()=>{
   $('salvarPlantao').disabled=true;status('Conferindo os alertas da equipe…');
   sincronizarAlertas(()=>{
     $('salvarPlantao').disabled=false;
+    const j=janelaTurno(state.turno),agora=Date.now();
+    if(j&&(agora<j.ini-3600000||agora>j.fim+4*3600000)&&!confirm('O plantão está marcado como '+rotuloTurno(state.turno)+
+      ', mas pelo horário atual o turno é '+rotuloTurno(turnoPeloRelogio())+'.\n\nO relatório e o PDF vão sair como '+rotuloTurno(state.turno)+'. Encerrar mesmo assim?')){
+      status('Encerramento cancelado. Confira o turno no campo "Plantão".');return;}
+    if(!state.active.length&&!confirm('Este plantão não tem nenhum alerta registrado — o relatório vai sair com o mapa vazio.\n\n'+
+      'Se você emitiu alertas neste turno, eles podem ter ido para o plantão anterior, que outra pessoa encerrou. '+
+      'Confira a aba Alertas da planilha antes.\n\nEncerrar mesmo assim?')){
+      status('Encerramento cancelado.');return;}
     const outros=[...new Set(state.active.filter(a=>!podeExcluir(a)).map(a=>a.owner||a.email).filter(Boolean))];
     if(outros.length&&!confirm(textList(outros)+(outros.length>1?' também emitiram':' também emitiu')+
       ' alertas neste plantão ('+rotuloTurno(state.turno)+').\n\nEncerrar o plantão para todos?')){status('Encerramento cancelado.');return;}
@@ -1075,6 +1096,7 @@ function sincronizarAlertas(cb){
       });
       state.active=lista.concat(manter).sort((x,y)=>(y.expiresAt||0)-(x.expiresAt||0));
       state.plantaoId=agora;
+      try{mostrarTurno();}catch(e){}   // atualiza o aviso de turno com o plantão já conhecido
       if(antes!==agora)mostrarIdPlantao(agora?{id:agora,iniciadoEm:r.iniciadoEm}:null);
       if(encerradoPorOutro){
         status('O plantão '+antes+' foi encerrado por outro plantonista. Os alertas dele já estão no relatório; '+
@@ -1112,6 +1134,19 @@ function turnoPeloRelogio(){
   const agora=new Date(),h=Number(partesMG(agora).hour);
   if(h>=7&&h<19)return {turno:'Diurno',data:isoMG(agora)};
   return {turno:'Noturno',data:isoMG(h<7?new Date(agora.getTime()-12*3600000):agora)};
+}
+/* início e fim do turno em milissegundos (horário de Brasília, UTC-3, sem horário de verão) */
+function janelaTurno(t){
+  if(!t||!t.data||!TURNOS[t.turno])return null;
+  const ini=Date.parse(t.data+'T'+TURNOS[t.turno].inicio+':00-03:00');
+  return {ini,fim:ini+12*3600000};
+}
+const mesmoTurno=(a,b)=>!!a&&!!b&&a.turno===b.turno&&a.data===b.data;
+/* plantão aberto pertence a um turno que já terminou (ex.: Diurno de hoje, agora 19h30) */
+function turnoDoPlantaoJaTerminou(){
+  if(!state.plantaoId||!turnoServidor)return false;
+  const j=janelaTurno(turnoServidor);
+  return !!j&&Date.now()>=j.fim;
 }
 function rotuloTurno(t){return t&&t.turno?dataBR(t.data)+' – '+t.turno:'(turno não escolhido)';}
 function nomeRelatorio(snap){
@@ -1158,6 +1193,16 @@ function mostrarTurno(){
     const quem=turnoServidor&&turnoServidor.por&&state.plantaoId?String(turnoServidor.por).split('@')[0]:'';
     info.textContent='Pasta no Drive: '+pasta+(quem?' · definido no 1º alerta ('+quem+')':'');
     info.title=quem?'Turno definido no primeiro alerta do plantão por '+turnoServidor.por+'.':'';
+    info.style.opacity='.75';info.style.color='';info.style.fontWeight='';
+    const relogio=turnoPeloRelogio();
+    if(turnoDoPlantaoJaTerminou()){
+      info.textContent='⚠ O plantão aberto é do turno '+rotuloTurno(turnoServidor)+', que já terminou e ainda não foi encerrado. '+
+        'Os alertas emitidos agora entram no relatório desse turno. Se você estava nesse turno, encerre o plantão (botão de salvar a passagem); se não, peça a quem estava.';
+      info.style.opacity='1';info.style.color='#b45309';info.style.fontWeight='600';
+    }else if(!mesmoTurno(state.turno,relogio)&&!state.plantaoId){
+      info.textContent='⚠ Pelo horário atual o turno é '+rotuloTurno(relogio)+'. Confira se o turno marcado está certo. · Pasta: '+pasta;
+      info.style.opacity='1';info.style.color='#b45309';info.style.fontWeight='600';
+    }
   }
 }
 function preencherHorariosTurno(){
@@ -1175,6 +1220,10 @@ function aplicarTurnoDoServidor(t){
 }
 function alterarTurno(novo){
   const antes={...state.turno};
+  const relogio=turnoPeloRelogio();
+  if(!mesmoTurno(novo,relogio)&&!confirm('Pelo horário atual (Brasília), o turno é '+rotuloTurno(relogio)+'.\n\n'+
+    'Você está marcando '+rotuloTurno(novo)+'. O relatório, as pastas do Drive e o .txt vão sair com esse turno.\n\n'+
+    'Confirmar '+rotuloTurno(novo)+'?')){mostrarTurno();return;}
   if(state.plantaoId&&turnoServidor&&temFuncao('definirTurnoPlantao')){
     if(!confirm('O plantão '+state.plantaoId+' já está como '+rotuloTurno(antes)+'.\n\n'+
       'Mudar para '+rotuloTurno(novo)+' vale para toda a equipe neste plantão. Os próximos arquivos irão para a nova pasta '+
@@ -1214,12 +1263,22 @@ function alertasVigentesEm(cities){
   return out;
 }
 const emitirAgora=$('emit').onclick;
+let avisoTurnoAceito='';
 $('emit').onclick=()=>{
   const cities=[...state.selected];if(!cities.length)return;
   if(!/^([01]?\d|2[0-3]):[0-5]\d$/.test($('time').value.trim())){emitirAgora();return;}   // a própria emissão mostra o erro
   $('emit').disabled=true;emitStatus('Conferindo os alertas vigentes da equipe…');
   sincronizarAlertas(()=>{
     $('emit').disabled=false;
+    if(turnoDoPlantaoJaTerminou()&&avisoTurnoAceito!==state.plantaoId){
+      if(!confirm('ATENÇÃO: o plantão aberto ('+state.plantaoId+') é do turno '+rotuloTurno(turnoServidor)+', que já terminou e ainda não foi encerrado.\n\n'+
+        'Se você emitir agora, este alerta vai para o relatório do turno '+rotuloTurno(turnoServidor)+' — e quando esse plantão for encerrado, ele sai da sua tela.\n\n'+
+        'O certo é quem estava nesse turno encerrar o plantão antes (aba Plantão e relatório). Depois disso, o próximo alerta abre o plantão '+rotuloTurno(turnoPeloRelogio())+'.\n\n'+
+        'OK = emitir mesmo assim neste plantão   ·   Cancelar = não emitir agora')){
+        emitStatus('Emissão cancelada: o plantão do turno anterior ainda está aberto.','erro');return;
+      }
+      avisoTurnoAceito=state.plantaoId;   // pergunta uma vez por plantão
+    }
     const dup=alertasVigentesEm(cities);
     if(dup.length){
       const linhas=dup.slice(0,12).map(({a,em})=>'• '+em.join(', ')+': '+(a.type||'alerta')+' até '+(a.end||'?')+(a.owner?' ('+a.owner+')':''));
