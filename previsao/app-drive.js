@@ -1,21 +1,33 @@
-/* Código da Previsão diária v1.11 (v1.10 + aba "Previsão por cidade").
+/* Código da Previsão diária v1.15 (folha 297 × 210 mm, rodapé com quebra automática, mapas base, ícones sempre dentro de Minas).
    Extraído de "Previsão diária — Minas Gerais v1.1.html" para a versão Apps Script
    (carregado de fora para o Apps Script não interferir no código). */
 
 "use strict";
 /* ================= constantes do modelo QGIS (layout_mapas_icones_v3.6) ================= */
-const PAGE = {w:297, h:222.75};
-const MAP = {x:6.86137, y:19.8108, w:287.879, h:171.968,
-  xmin:-51.37697910145185887, xmax:-35.90814406617541721, ymin:-23.17966841410345324, ymax:-13.93919886637183225};
+/* Folha A4 deitada: 297 × 210 mm (antes 297 × 222,75). O quadro do mapa mantém a largura e a escala;
+   a altura passa de 171,97 para 168 mm, recortando só faixas sem Minas no norte e no sul. */
+const PAGE = {w:297, h:210};
+const GEO_YMAX = -13.93919886637183225;                 // topo da extensão em que o geo.js foi gerado
+const MAP = {x:6.86137, y:19.8108, w:287.879, h:168,
+  xmin:-51.37697910145185887, xmax:-35.90814406617541721};
 const K = MAP.w / (MAP.xmax - MAP.xmin);
+const GEO_DY = 3.4;                                       // mm: o mapa sobe 3,4 mm em relação ao geo.js
+MAP.ymax = GEO_YMAX - GEO_DY / K; MAP.ymin = MAP.ymax - MAP.h / K;
+// desloca as geometrias do geo.js (caminhos com "M" absoluto e "l" relativo) para a nova extensão, uma única vez
+if (typeof GEO !== "undefined" && GEO.__dy == null){
+  for (const k of ["land", "states", "mg", "munLines", "mesoLines"]) if (typeof GEO[k] === "string")
+    GEO[k] = GEO[k].replace(/M(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g, (m, x, y) => `M${x} ${Math.round((+y - GEO_DY)*100)/100}`);
+  GEO.__dy = GEO_DY;
+}
 const PT = 25.4/72; // mm por ponto tipográfico
+const COL = 258.49, LIN_W = 51.28;   // eixo e largura das linhas da coluna da legenda (tudo alinhado no mesmo centro)
 const NAVY = "#092b6a";
 const FONT = "Arial, 'Liberation Sans', Helvetica, sans-serif";
 const CAT = Object.fromEntries(ICONS.map(c => [c.value, c]));
 const NONE = "sem informação";
 const DEFAULT_TEXTS = {
   region: "Minas Gerais",
-  footer: "Iniciativa realizada com recursos do Acordo de Reparação\ndo Rio Doce, firmado em decorrência do rompimento da\nBarragem de Fundão, da Samarco S.A. O rompimento, ocorrido\nem 5 de novembro de 2015, tirou a vida de 19 pessoas.",
+  footer: "Iniciativa realizada com recursos do Acordo de Reparação do Rio Doce, firmado em decorrência do rompimento da Barragem de Fundão, da Samarco S.A. O rompimento, ocorrido em 5 de novembro de 2015, tirou a vida de 19 pessoas.",
   credits: "Previsão de Tempo - SIMGE/IGAM, {ano}\nLimites municipais e mesorregiões - IBGE\nBase cartográfica: IBGE\nProjeção: Latitude/Longitude - Datum SIRGAS 2000"
 };
 // textos iniciais do boletim (exemplo enviado pela equipe; tudo editável)
@@ -35,7 +47,7 @@ const LOGO_SLOTS = [
   {key:"appa", name:"APPA", x:110.9, w:47.6},
   {key:"riodoce", name:"Reparação Rio Doce", x:161.4, w:37.6}
 ];
-const LOGO_Y = 202.9, LOGO_H = 15.5, LOGO_X0 = 10.5, LOGO_X1 = 196.4;
+const LOGO_Y = 196.35, LOGO_H = 10, LOGO_X0 = 10.5, LOGO_X1 = 196.4;   // rodapé de 13,1 mm (folha de 210 mm)
 // Todos os logotipos na mesma altura (ajustável por logotipo); espaçamento igual e separadores entre eles.
 function logoLayout(){
   const GAP = 6.5, avail = LOGO_X1 - LOGO_X0;
@@ -54,16 +66,16 @@ function logoLayout(){
 }
 // Municípios base cadastrados (lista fornecida pela equipe)
 const START_MUN = ["Almenara","Barbacena","Belo Horizonte","Buritis","Campos Altos","Carneirinho","Curvelo","Diamantina","Divinópolis","Extrema","Governador Valadares","Ipatinga","Itamonte","Januária","Juiz de Fora","Manhuaçu","Montes Claros","Paracatu","Patos de Minas","Pirapora","Poços de Caldas","Teófilo Otoni","Uberaba","Uberlândia","Viçosa"];
-const BASE_VERSION = 2;
+const BASE_VERSION = 4;
 // deslocamento inicial (mm) para quem fica cortado pela borda do mapa
-const DEFAULT_OFFSET = {"Extrema":[0,-5.5]};
+const DEFAULT_OFFSET = {};   // o posicionamento automático cuida das bordas (Extrema etc.)
 const MESO_LABELS = [
   ["NOROESTE DE MINAS",-46.43,-17.33],["NORTE DE MINAS",-43.97,-16.10],["JEQUITINHONHA",-41.33,-16.51],
   ["VALE DO MUCURI",-41.17,-17.68],["TRIÂNGULO MINEIRO/ALTO PARANAÍBA",-48.28,-19.23],["CENTRAL MINEIRA",-44.95,-18.76],
   ["METROPOLITANA DE BELO HORIZONTE",-43.75,-19.65],["VALE DO RIO DOCE",-42.05,-18.99],["OESTE DE MINAS",-45.24,-20.60],
   ["SUL/SUDOESTE DE MINAS",-45.87,-21.73],["CAMPO DAS VERTENTES",-44.29,-21.21],["ZONA DA MATA",-42.82,-21.01]];
 // siglas dos estados no ponto interno de cada um dentro da área do mapa; DF no centro do polígono
-const STATE_LABELS = [["MT",-51.18,-14.494],["GO",-49.744,-16.279],["DF",-47.797,-15.7755],["BA",-40.865,-14.794],["MS",-51.198,-19.86],
+const STATE_LABELS = [["MT",-51.18,-14.494],["GO",-49.744,-16.279],["DF",-47.797,-15.7755],["BA",-40.865,-14.794],["MS",-51.0,-20.45],
   ["SP",-48.785,-21.709],["RJ",-42.536,-22.359],["ES",-40.361,-19.342]];
 // PR fica de fora: a pequena parte dele dentro do mapa fica sob a escala gráfica
 const NORTH_ARROW = `<g transform="translate(-1.438 30.744)"><path d="m32-9.453l28.938 73.826-29-29-29 29z" fill="#000" stroke="#fff" stroke-width="3"/><path d="m32-9.453l29 73.45-29-29-29 29z" fill="none" stroke="#fff" stroke-linecap="square"/><text fill="#000" font-family="${FONT}" font-size="26" x="22.71" y="-10.854">N</text></g><g fill="none" stroke="#fff" stroke-width=".25" transform="translate(0 -3.829)"><path d="m4 92.82l6.74-3.891M4.603 90.7l10.397-6M3 95.17l4-2.309M5.442 88.45l13.856-8M12 72.26l18.686-10.812M14.593 65.45l16.09-9.291M15.343 63.24l15.343-8.858M16.877 60.58l13.809-7.972M17.511 58.45l13.174-7.606M18.412 56.15l12.274-7.087M19 54.04l11.427-6.597M20 51.757l10.822-6.311M20.826 49.45l9.86-5.693M21.48 47.3l9.206-5.315M23 44.647l7.686-4.437M23.744 42.45l6.928-4M24.549 40.21l6.137-3.543M25 38.18l5.686-3.283M26.663 35.446l4.02-2.323M27.617 33.12l3.069-1.772M28 31.13l2.686-1.551M29.15 28.694l1.534-.886M13 69.909l17.686-10.211M9.206 79.19l21.48-12.402M8.36 81.45l22.326-12.89M7.671 83.62l19.946-11.516M6.137 86.27l17.02-9.827M10 76.956l20.686-11.943M11.279 74.45l19.407-11.205M14 67.56l16.686-9.634"/><path d="m30.562 69.573v-43.566"/></g>`;
@@ -91,6 +103,8 @@ function shownTemps(r){
   if (useMin()) try { mn = parseTemp(r.tmin); } catch(e){}
   return [mx, mn];
 }
+// município ainda sem condição do tempo e sem temperatura: no mapa ficam só o ponto e o nome
+const vazio = r => r.tempo === NONE && shownTemps(r).every(v => v == null);
 function checkRow(r){
   const e = {};
   let mx = null, mn = null;
@@ -119,7 +133,7 @@ function makeRow(name){
 function todayISO(){ const d = new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
 function defaultState(){
   return {date: todayISO(), val:{time:"10:00", date:addDays(todayISO(),1), auto:true}, rows: START_MUN.map(makeRow), texts: {...DEFAULT_TEXTS},
-    opts:{mun:true, meso:true, mesoNames:false, states:true, names:true, autoSpread:true, temps:"both", iconScale:1, nameSize:3.5, mgFill:true, baseFill:true}, bgActive:null, baseVersion:BASE_VERSION, namesDefaultV:2, noticeDismissed:true, savedSig:null};
+    opts:{mun:true, meso:true, mesoNames:false, states:true, names:true, ptSede:true, autoSpread:true, temps:"both", iconScale:0.5, nameSize:3.5, mgFill:true, baseFill:true, baseHidro:true, baseRod:true, baseUrb:true, bgClipMG:true}, bgActive:null, baseVersion:BASE_VERSION, namesDefaultV:2, noticeDismissed:true, savedSig:null};
 }
 function addDays(iso, n){ if (!iso) return ""; const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate()+n);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -145,8 +159,12 @@ delete S.validity;
 if (S.namesDefaultV !== 2){ S.opts.names = true; S.namesDefaultV = 2;
   S.rows.forEach(r => { if (DEFAULT_OFFSET[r.name] && !r.dx && !r.dy){ [r.dx, r.dy] = DEFAULT_OFFSET[r.name]; } }); }   // nomes passam a vir marcados
 if (S.baseVersion !== BASE_VERSION){
-  const old = new Map(S.rows.map(r => [r.name, r]));
-  S.rows = START_MUN.map(n => old.has(n) ? old.get(n) : makeRow(n));
+  S.rows.forEach(r => { if (r.name === "Extrema" && r.dx === 0 && r.dy === -5.5) r.dy = 0; });
+  // acrescenta os municípios base que faltarem (ex.: Paracatu, Uberaba, Campos Altos, Manhuaçu, Ipatinga,
+  // Barbacena), sem apagar o que já está na lista nem o que já foi preenchido
+  const tem = new Set(S.rows.map(r => r.name));
+  for (const n of START_MUN) if (!tem.has(n) && MUN.has(n)) S.rows.push(makeRow(n));
+  S.rows.sort((a, b) => a.name.localeCompare(b.name, "pt-BR", {sensitivity:"base"}));
   S.baseVersion = BASE_VERSION; S.noticeDismissed = true;
 }
 let LOGOS = {};                                    // logotipos sempre os incluídos no layout
@@ -158,7 +176,7 @@ const sortRows = () => S.rows.sort((a,b) => a.name.localeCompare(b.name, "pt-BR"
 const sig = () => JSON.stringify([S.date, validityText(), S.rows.map(r => [r.name, r.tempo, r.tmax, r.tmin])]);
 let saveTimer = null;
 const flush = () => { clearTimeout(saveTimer); saveTimer = null; store.set(LS.draft, {...S, rows: S.rows.map(({id, ...r}) => r)}); };
-function persist(){ clearTimeout(saveTimer); saveTimer = setTimeout(flush, 250); updateStatus(); }
+function persist(){ clearTimeout(saveTimer); saveTimer = setTimeout(flush, 250); updateStatus(); if (typeof histTouch === "function") histTouch(); }
 addEventListener("pagehide", () => { if (saveTimer) flush(); });
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && saveTimer) flush(); });
 
@@ -176,6 +194,24 @@ function fitSize(lines, sizeMM, maxW, weight){
 }
 // QGIS centraliza a linha pela altura ascendente+descendente (Arial: .905/.212)
 const ASC = .905, DESC = .212, LH = 1.117;
+// Quebra o texto em linhas na largura maxW e escolhe a maior letra (até sMax) em que tudo cabe na altura maxH.
+// Uma quebra de linha simples vira espaço; uma linha em branco separa parágrafos.
+function wrapFit(text, maxW, maxH, sMax, sMin, weight){
+  const paras = String(text).replace(/\r/g, "").split(/\n\s*\n/).map(p => p.replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+  const wrap = s => { const out = [];
+    for (const p of paras){ let line = "";
+      for (const w of p.split(" ")){ const t = line ? line + " " + w : w;
+        if (!line || textW(t, s, weight) <= maxW) line = t; else { out.push(line); line = w; } }
+      if (line) out.push(line); }
+    return out; };
+  const alt = (n, s) => n*s*LH - (LH - (ASC+DESC))*s;
+  let s = sMax, lines = wrap(s);
+  while (s > sMin && (alt(lines.length, s) > maxH || lines.some(l => textW(l, s, weight) > maxW))){ s = Math.max(sMin, s - 0.02); lines = wrap(s); }
+  // última linha muito curta (palavra sozinha): tenta uma letra até 8% menor para caber numa linha a menos
+  if (lines.length > 1 && textW(lines[lines.length-1], s, weight) < maxW*0.35){
+    for (let s2 = s - 0.02; s2 >= Math.max(sMin, s*0.92); s2 -= 0.02){ const l2 = wrap(s2); if (l2.length < lines.length){ s = s2; lines = l2; break; } } }
+  return {lines, size: Math.min(s, ...lines.map(l => { const w = textW(l, s, weight); return w > maxW ? s*maxW/w : s; }))};
+}
 function textBlock({lines, x, yTop, h, size, weight, fill, anchor, extra}){
   const total = lines.length * size * LH - (LH - (ASC+DESC)) * size;
   let y = yTop + (h - total)/2 + ASC*size;
@@ -191,23 +227,43 @@ function usedCats(){
   const used = new Set();
   for (const r of S.rows){
     const [x, y] = iconXY(r);
-    if (x >= MAP.x && x <= MAP.x+MAP.w && y >= MAP.y && y <= MAP.y+MAP.h) used.add(r.tempo);
+    if (!vazio(r) && x >= MAP.x && x <= MAP.x+MAP.w && y >= MAP.y && y <= MAP.y+MAP.h) used.add(r.tempo);
   }
   return ICONS.filter(c => used.has(c.value));
 }
 // todos os ícones com a mesma área visual, independentemente da proporção do desenho
 const ICON_AREA = 215; // mm² no tamanho 100%
-// Correção visual por ícone: desenhos altos (termômetros) pareciam maiores e
-// desenhos espalhados (chuva a qualquer momento) pareciam menores com a mesma área.
-const ICON_FIX = {"calor intenso":0.8, "frio intenso":0.82, "chuva a qualquer momento":1.2, "ventos fortes":0.9,
-  "sem informação":0.9, "geada":0.95, "névoa seca":1.05, "nevoeiro":0.95, "tornado":0.97};
+// Correção visual por ícone, medida pela "tinta" de cada desenho (quanto da caixa é desenho de fato):
+// desenhos vazados (sol com raios, nuvens pequenas, névoa) ganham um pouco e os maciços (nublado, ?) perdem;
+// os altos (termômetros) perdem um pouco e os largos e baixos ganham,
+// para todos parecerem do mesmo tamanho no mapa.
+const ICON_FIX = {"névoa seca": 1.35, "ventos fortes": 1.23, "chuva a qualquer momento": 1.2, "céu claro": 1.08, "chuvas isoladas pela manhã": 1.07, "tempestades à tarde": 1.05, "tempestades pela manhã": 1.05, "chuvas isoladas à tarde": 1.03, "predomínio de sol": 1.03, "nublado com tempestades": 1.07, "calor intenso": 0.91, "tempestades": 0.98, "nublado com chuva": 0.98, "tornado": 0.96, "granizo": 0.97, "frio intenso": 0.91, "chuvisco": 1.01, "nublado com chuva forte": 0.96, "geada": 0.94, "aviso de tempo severo": 0.96, "tempestade severa": 0.96, "tempestade com chuva forte": 0.95, "nevoeiro": 1.01, "nublado": 0.96, "sem informação": 0.85};
 function iconDims(c, scale){
   const k = ICON_FIX[c.value] || 1;
   const A = ICON_AREA*scale*scale; let w = Math.sqrt(A/c.ar)*k, h = w*c.ar; const m = 19.5*scale;
   if (w > m){ w = m; h = w*c.ar; } if (h > m){ h = m; w = h/c.ar; }
   return [w, h];
 }
-const iconXY = r => { const [x,y] = proj(r.lon, r.lat); return [x + (r.dx||0), y + (r.dy||0)]; };
+// Ponto da sede: lat/lon exata do município (fixo). Com ele ligado, o ícone fica logo acima do ponto
+// e o nome logo abaixo; ícone e temperaturas podem ser arrastados ou afastados, o ponto e o nome não.
+/* Tamanho efetivo dos ícones no mapa: o escolhido pela pessoa ou, se o mapa não comportar os ícones
+   sem sobreposição e perto das sedes, um pouco menor (ajuste automático, igual para todos). */
+let EFF_K = null;
+const iconK = () => EFF_K ?? (S.opts.iconScale || 1);
+// ícone que não coube em lugar nenhum no tamanho geral (ex.: Extrema, na ponta do estado) fica só ele menor
+let ROW_K = new Map();
+const iconKr = r => ROW_K.get(r.id) ?? iconK();
+// temperaturas acompanham o tamanho dos ícones (quando o mapa todo reduz, elas reduzem um pouco também)
+const tempSz = r => 10*PT*Math.min(1, Math.max(0.74, 0.5 + 0.5*iconKr(r)));
+const PT_R = 0.65;                                              // raio do ponto (mm): metade do tamanho anterior
+const sedeXY = r => proj(r.lon, r.lat);
+const iconXY = r => { const [x,y] = proj(r.lon, r.lat);
+  let oy = 0; if (S.opts.ptSede){ const [, h] = iconDims(CAT[r.tempo] || CAT[NONE], iconKr(r)); oy = -(h/2 + PT_R + 0.6); }
+  return [x + (r.dx||0), y + oy + (r.dy||0)]; };
+function nomeSedeRect(r){                                       // retângulo do nome sob o ponto (absoluto, mm)
+  const ns = S.opts.nameSize || 3.5, [sx, sy] = sedeXY(r), nw = (textW(r.name, ns, 700) + ns*0.3)/2;
+  return [sx - nw, sy + PT_R + 0.35, sx + nw, sy + PT_R + 0.35 + (ASC+DESC)*ns];
+}
 const isPinned = r => { const d0 = DEFAULT_OFFSET[r.name] || [0,0]; return (r.dx||0) !== d0[0] || (r.dy||0) !== d0[1]; };
 
 /* ---------- afastamento automático ----------
@@ -216,7 +272,7 @@ const isPinned = r => { const d0 = DEFAULT_OFFSET[r.name] || [0,0]; return (r.dx
    empurrados um pouco, pelo eixo de menor sobreposição, até se separarem. Ícones posicionados à mão
    ficam fixos e os outros se afastam deles. O deslocamento máximo é limitado para manter cada ícone
    perto do seu município. */
-let AUTO = new Map(), NAME_UP = new Set();
+let AUTO = new Map(), NAME_UP = new Set(), NAME_POS = new Map(), TEMP_LEFT = new Set(), STACKED = new Set(), TEMP_BELOW = new Set();
 const AUTO_MAX = 4;           // mm — deslocamento pequeno
 // polígono de Minas Gerais (mm da página) para manter os ícones dentro do estado
 const MG_RINGS = (() => { const rings = []; let cur = null, x = 0, y = 0;
@@ -236,29 +292,409 @@ function inMG(px, py){
 }
 function groupRects(r){
   const c = CAT[r.tempo] || CAT[NONE];
-  const [w, h] = iconDims(c, S.opts.iconScale || 1);
-  const tsz = 10*PT, ns = S.opts.nameSize || 3.5;
+  const [w, h] = iconDims(c, iconKr(r));
+  const tsz = tempSz(r), ns = S.opts.nameSize || 3.5;
   const [mx, mn] = shownTemps(r);
-  const solid = [[-w/2*0.94, -h/2*0.94, w/2*0.94, h/2*0.94]];
+  const solid = [[-w/2*0.98, -h/2*0.98, w/2*0.98, h/2*0.98]];
+  let sob = null;   // temperaturas embaixo do ícone (usado só onde o espaço é apertado)
   if (mx != null || mn != null){
     const tw = Math.max(mx != null ? textW(fmtTemp(mx)+"°C", tsz, 700) : 0, mn != null ? textW(fmtTemp(mn)+"°C", tsz, 700) : 0);
     const both = mx != null && mn != null, lh = (ASC+DESC)*tsz;
-    solid.push(both ? [w/2+1.0, 0.4 - lh - 0.2, w/2+1.3+tw+0.4, 0.4 + lh + 0.2] : [w/2+1.0, -lh/2 - 0.2, w/2+1.3+tw+0.4, lh/2 + 0.2]);
+    sob = [-tw/2 - 0.3, h/2*0.98 + 0.15, tw/2 + 0.3, h/2*0.98 + 0.15 + (both ? 2 : 1)*lh*0.92 + 0.3];
+    if (TEMP_BELOW.has(r.id)) solid.push(sob);
+    else solid.push(both ? [w/2+1.0, 0.4 - lh - 0.2, w/2+1.3+tw+0.4, 0.4 + lh + 0.2] : [w/2+1.0, -lh/2 - 0.2, w/2+1.3+tw+0.4, lh/2 + 0.2]);
   }
   const nw = (textW(r.name, ns, 700)+ns*0.3)/2, nh = (ASC+DESC)*ns;
   const below = [-nw, h/2+0.3, nw, h/2+0.3+nh], above = [-nw, -h/2-0.3-nh, nw, -h/2-0.3];
-  return {solid, name: S.opts.names ? [below] : [], below, above, h};
+  return {solid, sob, name: S.opts.names ? [below] : [], below, above, h};
 }
-let AUTO_KEY = "";
+/* Máscara de Minas Gerais (4 px por mm, com 0,4 mm de folga da divisa) para testar retângulos inteiros. */
+let MG_MASK = null;
+const MASK_R = 4;
+function mgMask(){
+  if (MG_MASK !== null) return MG_MASK;
+  try {
+    const W = Math.ceil(MAP.w*MASK_R), H = Math.ceil(MAP.h*MASK_R), c = document.createElement("canvas"); c.width = W; c.height = H;
+    const g = c.getContext("2d", {willReadFrequently:true}), path = new Path2D(GEO.mg);
+    g.scale(MASK_R, MASK_R); g.fillStyle = "#000"; g.fill(path, "evenodd");
+    g.globalCompositeOperation = "destination-out"; g.lineWidth = 0.8; g.lineJoin = "round"; g.stroke(path);
+    const d = g.getImageData(0, 0, W, H).data, m = new Uint8Array(W*H), sat = new Uint32Array((W+1)*(H+1));
+    for (let i = 0; i < m.length; i++) m[i] = d[i*4+3] > 127 ? 1 : 0;
+    // tabela de somas acumuladas das células FORA de Minas: conta o que cai fora de qualquer retângulo de uma vez
+    for (let y = 0; y < H; y++){ let row = 0; for (let x = 0; x < W; x++){ row += 1 - m[y*W+x]; sat[(y+1)*(W+1)+x+1] = sat[y*(W+1)+x+1] + row; } }
+    MG_MASK = {W, H, m, sat};
+  } catch(e){ MG_MASK = false; }
+  return MG_MASK;
+}
+function ptIn(px, py){
+  const M = mgMask(); if (!M) return inMG(px, py);
+  const x = Math.floor((px - MAP.x)*MASK_R), y = Math.floor((py - MAP.y)*MASK_R);
+  return x >= 0 && y >= 0 && x < M.W && y < M.H && M.m[y*M.W + x] === 1;
+}
+// área (mm²) do retângulo que fica fora de Minas (0 = inteiro dentro)
+function rectOut(x1, y1, x2, y2){
+  const M = mgMask();
+  if (M){
+    const c = v => Math.max(0, Math.min(M.W, v)), r = v => Math.max(0, Math.min(M.H, v));
+    const X1 = Math.floor((x1 - MAP.x)*MASK_R), Y1 = Math.floor((y1 - MAP.y)*MASK_R), X2 = Math.ceil((x2 - MAP.x)*MASK_R), Y2 = Math.ceil((y2 - MAP.y)*MASK_R);
+    const total = Math.max(0, X2 - X1)*Math.max(0, Y2 - Y1);
+    const a = c(X1), b = r(Y1), e = c(X2), f = r(Y2), W1 = M.W + 1;
+    const inFrame = (e - a)*(f - b), outIn = inFrame > 0 ? M.sat[f*W1+e] - M.sat[b*W1+e] - M.sat[f*W1+a] + M.sat[b*W1+a] : 0;
+    return (outIn + (total - inFrame)) / (MASK_R*MASK_R);
+  }
+  let out = 0; const nx = Math.max(1, Math.ceil((x2-x1)/0.5)), ny = Math.max(1, Math.ceil((y2-y1)/0.5));
+  for (let i = 0; i <= nx; i++){ const x = x1 + (x2-x1)*i/nx; if (!ptIn(x, y1)) out++; if (!ptIn(x, y2)) out++; }
+  for (let j = 1; j < ny; j++){ const y = y1 + (y2-y1)*j/ny; if (!ptIn(x1, y)) out++; if (!ptIn(x2, y)) out++; }
+  if (!ptIn((x1+x2)/2, (y1+y2)/2)) out++;
+  return out;
+}
+// ícone (com as temperaturas) inteiro dentro de Minas, com o centro do ícone em (cx, cy)
+function blockInMG(r, cx, cy){ return groupRects(r).solid.every(q => rectOut(cx+q[0], cy+q[1], cx+q[2], cy+q[3]) === 0); }
+
+/* Posicionamento com ponto na sede.
+   Para cada município são testadas posições do ícone em volta do ponto (16 direções, encostado no ponto
+   e um pouco mais longe) e posições do nome (abaixo, acima, à direita, à esquerda e nas diagonais).
+   Regras: ícone, temperaturas e nome inteiros dentro de Minas; nada se sobrepõe a nada (ícones, nomes,
+   temperaturas e pontos de outros municípios). Preferência: ícone logo acima do ponto e nome logo abaixo;
+   quanto mais longe disso, maior o custo. Ícones arrastados à mão ficam onde foram deixados. */
+// afastamento máximo aceitável (linha de ~1,5 cm); além disso o tamanho não cabe
+const GEN_CACHE = new Map();
+const EX_PERTO = 5, CAP_MAX = 14; let EX_MAX = EX_PERTO;
+// Linha de indicação: sai do ponto apontando para o CENTRO do ícone e para na borda do desenho (não "raspa"
+// de lado nem termina no vazio). Retorna [x1, y1, x2, y2] ou null quando o ícone já está colado no ponto.
+function linhaIcone(sx, sy, x, y, w, h){
+  const vx = sx - x, vy = sy - y, hw = w/2*0.8, hh = h/2*0.8;
+  const s = Math.min(Math.abs(vx) > 1e-9 ? hw/Math.abs(vx) : Infinity, Math.abs(vy) > 1e-9 ? hh/Math.abs(vy) : Infinity);
+  if (!(s < 1)) return null;
+  const ex = x + vx*s, ey = y + vy*s, L = Math.hypot(ex - sx, ey - sy);
+  if (L < PT_R + 2.6) return null;          // ícone praticamente colado: sem tracinho (evita "toquinhos")
+  const ux = (ex - sx)/L, uy = (ey - sy)/L;
+  return [sx + ux*(PT_R + 0.25), sy + uy*(PT_R + 0.25), ex - ux*0.35, ey - uy*0.35];
+}
+function layoutSede(){
+  const ns = S.opts.nameSize || 3.5, nh = (ASC+DESC)*ns, SQ = PT_R + 0.35, M = 0.4;
+  const auto = !!S.opts.autoSpread;
+  let seed = 20261020; const rnd = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };   // sorteio fixo: mesmo resultado sempre
+  // encosta/sobrepõe considerando uma folga de conforto M entre os desenhos
+  // segmento (linha do ponto até o ícone) cruza o retângulo (aumentado de m)?
+  const segHit = (L, r, m) => { let t0 = 0, t1 = 1; const dx = L[2] - L[0], dy = L[3] - L[1];
+    const P = [-dx, dx, -dy, dy], Q = [L[0] - (r[0] - m), (r[2] + m) - L[0], L[1] - (r[1] - m), (r[3] + m) - L[1]];
+    for (let i = 0; i < 4; i++){ if (Math.abs(P[i]) < 1e-12){ if (Q[i] < 0) return false; } else { const t = Q[i]/P[i]; if (P[i] < 0){ if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; } } }
+    return true; };
+  const segX = (a, b) => { const d = (p, q, r) => (q[0]-p[0])*(r[1]-p[1]) - (q[1]-p[1])*(r[0]-p[0]);
+    const A1 = [a[0], a[1]], A2 = [a[2], a[3]], B1 = [b[0], b[1]], B2 = [b[2], b[3]];
+    return d(A1, A2, B1)*d(A1, A2, B2) < 0 && d(B1, B2, A1)*d(B1, B2, A2) < 0; };
+  const hitM = (q, p) => Math.min(q[2], p[2]) - Math.max(q[0], p[0]) + M > 0 && Math.min(q[3], p[3]) - Math.max(q[1], p[1]) + M > 0;
+  const n = S.rows.length;
+  // partes fixas de cada município: ponto e nome (centralizado logo abaixo do ponto)
+  const FIXED = S.rows.map(r => { const [sx, sy] = sedeXY(r), o = [[sx-SQ, sy-SQ, sx+SQ, sy+SQ]];
+    if (S.opts.names){ const w = textW(r.name, ns, 700) + ns*0.3, d = PT_R + 0.35; o.push([sx - w/2, sy + d, sx + w/2, sy + d + nh]); }
+    return o; });
+  const ALLFIX = FIXED.flatMap((o, ri) => o.map(q => ({q, ri})));
+  const PTS = S.rows.map(r => sedeXY(r));
+  // posições candidatas do ícone (com as temperaturas) de um município, no tamanho atual dele
+  function gen(r, ri, capGen){
+    const [sx, sy] = sedeXY(r), pt = FIXED[ri][0], nameQ = FIXED[ri][1] || null;
+    const cap = capGen || CAP_MAX;
+    // só o que está por perto pode colidir (bem mais rápido do que testar o mapa inteiro a cada posição)
+    const RAIO = Math.max(15, cap + 12) + 40, perto = q => Math.max(q[0] - sx, 0, sx - q[2]) < RAIO && Math.max(q[1] - sy, 0, sy - q[3]) < RAIO;
+    const NF = ALLFIX.filter(f => perto(f.q)), NP = PTS.map((p, j) => [p, j]).filter(([p, j]) => j !== ri && Math.abs(p[0] - sx) < 2*RAIO && Math.abs(p[1] - sy) < 2*RAIO);
+    void 0;                                        // gera até o afastamento máximo; quem decide o quanto usar é a busca
+    const g = groupRects(r), [nx0, ny0] = iconXY(r);
+    const blkR = g.solid, blkL = g.solid.map((q, k) => k ? [-q[2], q[1], -q[0], q[3]] : q), blkB = g.sob ? [g.solid[0], g.sob] : null;   // temperaturas à direita ou à esquerda
+    const I = g.solid[0];
+    const ic = [];
+    const add = (x, y, c, left, fix) => { const R = (left === 'b' ? blkB : left ? blkL : blkR).map(s => [x+s[0], y+s[1], x+s[2], y+s[3]]);
+      if (!fix){
+        if (R.some(s => !(s[2] <= pt[0] || s[0] >= pt[2] || s[3] <= pt[1] || s[1] >= pt[3]))) return;      // cobre o próprio ponto
+        if (nameQ && R.some(s => hitM(s, nameQ))) return;                                                  // cobre o próprio nome
+      }
+      ic.push({x, y, c: c + (left === 'b' ? 2.2 : left ? 0.9 : 0), left: left === true, below: left === 'b', R, fix}); };
+    if (isPinned(r) || !auto){ add(nx0, ny0, 0, false, true); if (auto && blkR.length > 1) add(nx0, ny0, 0.9, true, true); }
+    else for (const left of (blkR.length > 1 ? [false, true, 'b'] : [false])){
+      const up = sy - SQ - 0.25 - I[3], dn = sy + SQ + 0.25 - I[1];
+      for (const [yy, base] of [[up, 0], [dn, 2.2]]) for (const dx of [0, -1.5, 1.5, -3, 3, -5, 5, -7, 7, -9, 9])
+        for (const ey of [0, 1, 2.2, 4, 6.5]) add(sx + dx, yy + (yy < sy ? -ey : ey), base + 0.3*Math.abs(dx) + (dx||ey ? 0.3 : 0), left);
+      // ao lado do ponto, um pouco elevado para não encostar no próprio nome (bom perto da divisa, onde
+      // não cabe acima): à direita com as temperaturas à direita, à esquerda com as temperaturas à esquerda
+      { const topo = nameQ ? nameQ[1] - M - 0.05 : sy + I[3];
+        const yl = Math.min(sy, topo - I[3]);
+        const xs = left ? sx - SQ - 0.25 - I[2] : sx + SQ + 0.25 - I[0], dir = left ? -1 : 1;
+        for (const ox of [0, 0.8, 1.8, 3, 4.5]) for (const oy of [-2, -1, 0, 1, 2.2, 3.5, 5]) add(xs + dir*ox, yl - oy, 0.8 + 0.6*ox + 0.5*oy, left); }
+      // empilhado: ponto, nome e, logo abaixo do nome, o ícone centralizado (quando a faixa do estado é estreita)
+      if (nameQ){ const yb = nameQ[3] + M + 0.05 - I[1];
+        for (const dx of [0, -1.5, 1.5, -3, 3, -5, 5, -7, 7]) for (const oy of [0, 1]){ const n0 = ic.length; add(sx + dx, yb + oy, 1.6 + 0.4*Math.abs(dx) + 0.5*oy, left); if (ic.length > n0) ic[ic.length-1].stack = true; } }
+      for (let k = 0; k < 36; k++){
+        const th = -Math.PI/2 + k*Math.PI/18, dx = Math.cos(th), dy = Math.sin(th);
+        const tx = dx > 1e-9 ? (SQ - I[0])/dx : dx < -1e-9 ? (-SQ - I[2])/dx : Infinity;
+        const ty = dy > 1e-9 ? (SQ - I[1])/dy : dy < -1e-9 ? (-SQ - I[3])/dy : Infinity;
+        const t0 = Math.max(0, Math.min(tx, ty)) + 0.25, ang = Math.min(k, 36-k)*24/36;
+        for (const ex of [0, 0.7, 1.5, 2.5, 4, 5.5, 7.5, 10, 13, 16.5, 20, 24, 28, 33, 38, 44, 50]){ if (ex > cap + 3) break; add(sx + dx*(t0+ex), sy + dy*(t0+ex), 1.2 + 0.3*ang, left); }
+      }
+      // varredura fina ao redor do ponto: acha os vãos entre nomes e divisas que as posições acima não pegam
+      { const G = Math.max(15, cap + 12), st = Math.max(1.2, G/16);
+        for (let gx = -G; gx <= G; gx += st) for (let gy = -G + 2; gy <= G - 2; gy += st) add(sx + gx, sy + gy, 1.4, left); }
+    }
+    if (!ic.length) add(nx0, ny0, 0, false, true);
+    const def = [sx, sy - SQ - 0.25 - I[3]];
+    const out = [];
+    for (const q of ic){
+      q.out = q.R.reduce((t, s) => t + rectOut(...s), 0);
+      if (q.out && !q.fix) continue;                                                      // ícone fora de Minas: descartado
+      // não pode encostar em ponto ou nome de outro município (partes fixas)
+      if (!q.fix && NF.some(f => f.ri !== ri && q.R.some(s => hitM(s, f.q)))) continue;
+      // linha até o ícone (mesma regra do desenho): não pode cruzar nome/ponto de ninguém nem as próprias temperaturas
+      { const I0 = q.R[0]; q.L = q.stack ? null : linhaIcone(sx, sy, q.x, q.y, (I0[2] - I0[0])/0.98, (I0[3] - I0[1])/0.98); }
+      // com folga (o contorno branco dos textos é largo): nada de linha encostando em nome, ponto ou temperatura
+      if (q.L && !q.fix && (NF.some(f => (f.ri !== ri || f.q !== pt) && segHit(q.L, f.q, 0.6)) || q.R.slice(1).some(s => segHit(q.L, s, 0.9)))) continue;
+      const J = q.R[0], gx = Math.max(J[0] - sx, 0, sx - J[2]), gy = Math.max(J[1] - sy, 0, sy - J[3]);
+      q.ex = Math.max(0, Math.hypot(gx, gy) - PT_R - 0.35);
+      if (q.stack) q.ex = 0;                                                  // empilhado sob o nome: fica junto, sem linha
+      q.cost = q.fix ? 0 : q.c + 1.8*q.ex + (q.ex > 3 ? 2.5*(q.ex - 3) : 0) + (q.stack ? 0 : 0.12*Math.hypot(q.x - def[0], q.y - def[1]));
+      let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9; for (const s of q.R){ x1 = Math.min(x1, s[0]); y1 = Math.min(y1, s[1]); x2 = Math.max(x2, s[2]); y2 = Math.max(y2, s[3]); }
+      if (q.L){ x1 = Math.min(x1, q.L[0]); y1 = Math.min(y1, q.L[1]); x2 = Math.max(x2, q.L[0]); y2 = Math.max(y2, q.L[1]); }
+      q.bb = [x1, y1, x2, y2];
+      // o ícone tem de ficar claramente mais perto do próprio ponto do que de qualquer outro município
+      if (!q.fix && q.ex <= EX_PERTO){ const cx = (x1 + x2)/2, cy = (y1 + y2)/2, d0 = Math.hypot(cx - sx, cy - sy);   // afastado com linha: a linha já mostra de quem é
+        if (NP.some(([p]) => Math.hypot(cx - p[0], cy - p[1]) < d0 + 2)) continue; }
+      // clareza: quanto mais o ícone fica perto do ponto de OUTRO município (comparado ao próprio), mais caro —
+      // empurra os afastados para o lado livre, longe dos vizinhos (espalha de forma mais homogênea)
+      if (!q.fix){ const ix = (x1 + x2)/2, iy = (y1 + y2)/2, dO = Math.hypot(q.x - sx, q.y - sy); let dm = Infinity;
+        for (const [P] of NP){ const d = Math.min(Math.hypot(q.x - P[0], q.y - P[1]), Math.hypot(ix - P[0], iy - P[1])); if (d < dm) dm = d; }
+        q.cost += 1.6*Math.max(0, dO - dm + 4); }
+      out.push(q);
+    }
+    out.sort((u, v) => u.cost - v.cost);
+    // ícone nunca vai longe do ponto (nada de linhas compridas atravessando o mapa): só se aceita afastar
+    // o mínimo que a própria geografia exige; se faltar espaço, o mapa todo diminui por igual
+    const minEx = out.reduce((m, q) => Math.min(m, q.fix ? 0 : q.ex), Infinity);
+    const lim = Math.max(cap, minEx + 1);
+    void lim; return out;
+  }
+  const clash = (A, B) => { if (A.bb[0] > B.bb[2] + M || B.bb[0] > A.bb[2] + M || A.bb[1] > B.bb[3] + M || B.bb[1] > A.bb[3] + M) return false;
+    for (const q of A.R) for (const p of B.R) if (hitM(q, p)) return true;
+    if (A.L && B.R.some(p => segHit(A.L, p, 0.3))) return true;
+    if (B.L && A.R.some(p => segHit(B.L, p, 0.3))) return true;
+    if (A.L && B.L && segX(A.L, B.L)) return true;
+    return false; };
+  // tamanhos que um ícone pode assumir sozinho quando não cabe em lugar nenhum (relativos ao tamanho geral)
+  // todos os ícones sempre do MESMO tamanho: nenhum diminui sozinho (quem não cabe perto do ponto vai um pouco
+  // mais longe, com linha, ou fica logo abaixo do nome; se nem assim couber, o mapa todo reduz por igual)
+  const STEPS = [1];
+  // Todos os ícones no tamanho escolhido. Cada município começa podendo ficar só bem perto do próprio ponto;
+  // se não houver arranjo sem encostar, só os municípios do aperto ganham um degrau a mais de afastamento
+  // (com linha), e assim por diante — no fim, cada um volta para a posição livre mais próxima que houver.
+  const items = S.rows.map((r, ri) => ({r, ri, step: 0, geo: 0, all: [], cands: [], sel: null, cap: EX_PERTO, minEx: 0}));
+  // posições candidatas guardadas: dependem só do próprio município (ícone, temperaturas) e do que é fixo no
+  // mapa, então ao trocar um ícone só ele é recalculado (deixa a edição leve)
+  const baseGen = JSON.stringify([S.rows.map(r => r.id + "|" + r.name), S.opts.ptSede]);
+  const chaveGen = it => baseGen + JSON.stringify([iconK(), it.r.id, it.r.tempo, shownTemps(it.r), S.opts.temps, S.opts.names, S.opts.nameSize, auto, isPinned(it.r), it.r.dx, it.r.dy]);
+  for (const it of items){ ROW_K.delete(it.r.id); if (!vazio(it.r)){ const ck = chaveGen(it); it.all = GEN_CACHE.get(ck); if (!it.all){ it.all = gen(it.r, it.ri); if (GEN_CACHE.size > 600) GEN_CACHE.clear(); GEN_CACHE.set(ck, it.all); } it.minEx = it.all.reduce((m, q) => Math.min(m, q.fix ? 0 : q.ex), Infinity); if (!isFinite(it.minEx)) it.minEx = 0; } }
+  const filtra = it => { const lim = Math.max(it.cap, it.minEx + 1); it.cands = it.all.filter(q => q.fix || q.ex <= lim); };
+  const nb = items.map(it => items.filter(o => o !== it && Math.abs(FIXED[o.ri][0][0] - FIXED[it.ri][0][0]) < 95 && Math.abs(FIXED[o.ri][0][1] - FIXED[it.ri][0][1]) < 95));
+  const free = (it, q) => nb[it.ri].every(o => !o.sel || !clash(q, o.sel));
+  const ovPen = (A, B) => clash(A, B) ? 3000 : 0;
+  const local = (it, q) => { let s = q.cost; for (const o of nb[it.ri]) if (o.sel) s += ovPen(q, o.sel); return s; };
+  const freeEx = (it, q, ex) => nb[it.ri].every(o => o === ex || !o.sel || !clash(q, o.sel));
+  const problemas = () => { const p = new Set(); for (const it of items){ if (vazio(it.r)) continue; if (!it.sel){ p.add(it); continue; }
+    for (const o of nb[it.ri]) if (o.sel && clash(it.sel, o.sel)){ p.add(it); p.add(o); } } return p; };
+  const resolve = () => {
+    // 1) colocação inicial: quem tem menos opções primeiro
+    items.forEach(it => { it.sel = null; });
+    for (const it of items.slice().sort((u, v) => u.cands.length - v.cands.length)){ let best = null, bc = Infinity;
+      for (const q of it.cands){ if (q.cost >= bc) break; const c = local(it, q); if (c < bc){ bc = c; best = q; } }
+      it.sel = best || it.cands[0] || null; }
+    // 2) recozimento simulado
+    const live = items.filter(it => it.cands.length > 1);
+    const IT = 9000, T0 = 1500, T1 = 0.5;
+    for (let s = 0; s < IT && live.length; s++){
+      const T = T0 * Math.pow(T1/T0, s/IT), it = live[Math.floor(rnd()*live.length)];
+      const q = it.cands[Math.floor(Math.pow(rnd(), 1.5) * it.cands.length)]; if (q === it.sel) continue;
+      const d = local(it, q) - local(it, it.sel);
+      if (d <= 0 || rnd() < Math.exp(-d/T)) it.sel = q;
+    }
+    // 3) pares que ainda encostam procuram juntos duas posições livres
+    for (let guard = 0; guard < 80; guard++){
+      let A = null, B = null;
+      for (const it of items){ if (!it.sel) continue; const o = nb[it.ri].find(o => o.sel && clash(it.sel, o.sel)); if (o){ A = it; B = o; break; } }
+      if (!A) break;
+      const qa = A.cands.filter(c => freeEx(A, c, B)).slice(0, 150), qb = B.cands.filter(c => freeEx(B, c, A)).slice(0, 150);
+      let best = null, bc = Infinity;
+      for (const x of qa){ if (x.cost >= bc) break; for (const y of qb){ const c = x.cost + y.cost; if (c >= bc) break; if (!clash(x, y)){ bc = c; best = [x, y]; } } }
+      if (!best) break; A.sel = best[0]; B.sel = best[1];
+    }
+    // 4) se ainda sobrou: busca com retrocesso (menos opções livres primeiro, cortando dos vizinhos o que encostaria)
+    if (auto && problemas().size){
+      const act = items.filter(it => it.cands.length), ant = new Map(items.map(it => [it, it.sel]));
+      const dom = new Map(act.map(it => [it, it.cands.slice(0, 260)]));
+      act.forEach(it => { it.sel = null; });
+      const viz = new Map(act.map(it => [it, act.filter(o => o !== it && nb[it.ri].includes(o))]));
+      const t0 = performance.now(); let nos = 0;
+      const acabou = () => nos > 20000 || performance.now() - t0 > 160;
+      const busca = rest => {
+        if (!rest.length) return true;
+        if (++nos > 20000 || acabou()) return false;
+        let bi = 0; for (let i = 1; i < rest.length; i++) if (dom.get(rest[i]).length < dom.get(rest[bi]).length) bi = i;
+        const it = rest[bi], resto = rest.filter((_, i) => i !== bi), vz = viz.get(it).filter(o => !o.sel);
+        for (const q of dom.get(it).slice(0, 30)){
+          const sv = []; let morto = false;
+          for (const o of vz){ const d0 = dom.get(o), d1 = d0.filter(c => !clash(q, c)); sv.push([o, d0]); dom.set(o, d1); if (!d1.length){ morto = true; break; } }
+          if (!morto){ it.sel = q; if (busca(resto)) return true; it.sel = null; }
+          for (const [o, d0] of sv) dom.set(o, d0);
+          if (acabou()) return false;
+        }
+        return false;
+      };
+      if (!busca(act)) items.forEach(it => { it.sel = ant.get(it); });
+    }
+  };
+  const NIV = [EX_PERTO, 8, 11, CAP_MAX];
+  items.forEach(filtra); resolve();
+  for (let v = 0; v < 10 && auto; v++){
+    const p = problemas(); if (!p.size) break;
+    let mudou = false;
+    for (const it of p){ const nx = NIV.find(x => x > it.cap + 1e-6); if (nx != null){ it.cap = nx; filtra(it); mudou = true; } }
+    if (!mudou) break;
+    resolve();
+  }
+  // último recurso: quem ainda encosta pega a posição livre mais próxima entre todas as possíveis
+  const reparaPares = () => {
+  for (let guard = 0; guard < 40 && auto; guard++){   // pares que encostam: procura juntos em TODAS as posições possíveis
+    let A = null, B = null;
+    for (const it of items){ if (!it.sel) continue; const o = nb[it.ri].find(o => o.sel && clash(it.sel, o.sel)); if (o){ A = it; B = o; break; } }
+    if (!A) break;
+    const qa = A.all.filter(c => freeEx(A, c, B)).slice(0, 500), qb = B.all.filter(c => freeEx(B, c, A)).slice(0, 500);
+    let best = null, bc = Infinity;
+    for (const x of qa){ if (x.cost >= bc) break; for (const y of qb){ const c = x.cost + y.cost; if (c >= bc) break; if (!clash(x, y)){ bc = c; best = [x, y]; } } }
+    if (!best){
+      // nem em dupla: tira do caminho o vizinho mais "folgado" de A e tenta de novo
+      const C = nb[A.ri].filter(o => o !== B && o.sel && o.all.length > 1 && A.all.some(c => clash(c, o.sel))).sort((u, v) => v.all.length - u.all.length)[0];
+      if (!C) break; const keep = C.sel; C.sel = null;
+      const qa2 = A.all.filter(c => freeEx(A, c, B)).slice(0, 500);
+      let b2 = null, c2 = Infinity;
+      for (const x of qa2){ if (x.cost >= c2) break; for (const y of qb){ const c = x.cost + y.cost; if (c >= c2) break; if (!clash(x, y)){ c2 = c; b2 = [x, y]; } } }
+      if (b2){ A.sel = b2[0]; B.sel = b2[1]; C.sel = C.all.find(c => free(C, c)) || keep; } else { C.sel = keep; break; }
+      continue;
+    }
+    A.sel = best[0]; B.sel = best[1];
+  }
+  };
+  reparaPares();
+  // se ainda assim não couber, só os do aperto podem ir ainda mais longe
+  for (let rd = 0; rd < 6 && auto; rd++){ const p = [...problemas()]; if (!p.length) break;
+    p.sort((u, v) => u.all.length - v.all.length);
+    for (const it of p){ if (it.sel && free(it, it.sel)) continue; const prev = it.sel; it.sel = null;
+      it.sel = it.all.find(c => free(it, c)) || prev; } }
+  // acabamento: cada um vai para a posição livre mais próxima que existir (desfaz afastamentos desnecessários)
+  if (!problemas().size) for (let rd = 0; rd < 4; rd++){ let ch = false;
+    for (const it of items.filter(it => it.sel).sort((u, v) => v.sel.cost - u.sel.cost)){
+      const b = it.all.find(c => c.cost < it.sel.cost - 1e-9 && free(it, c)); if (b){ it.sel = b; ch = true; } }
+    if (!ch) break; }
+  // melhora em grupo: o município pior colocado e os vizinhos dele (até 5) são reposicionados juntos, buscando o
+  // arranjo de menor custo total sem encostar (um pode abrir espaço para o outro ficar perto do próprio ponto)
+  if (auto && !problemas().size){
+    const t0 = performance.now(), tentados = new Set();
+    for (let rodada = 0; rodada < 40 && performance.now() - t0 < 220; rodada++){
+      const pior = items.filter(it => it.sel && !it.sel.fix && !tentados.has(it)).sort((u, v) => v.sel.cost - u.sel.cost)[0];
+      if (!pior || pior.sel.cost < 3) break;
+      tentados.add(pior);
+      const cx = FIXED[pior.ri][0][0], cy = FIXED[pior.ri][0][1];
+      // quem está ocupando as posições melhores do pior colocado entra no grupo primeiro; depois os mais próximos
+      const melhores = pior.all.filter(c => c.cost < pior.sel.cost).slice(0, 60), bloq = new Map();
+      for (const c of melhores) for (const o of nb[pior.ri]) if (o.sel && !o.sel.fix && o.all.length > 1 && clash(c, o.sel)) bloq.set(o, (bloq.get(o) || 0) + 1);
+      const perto = nb[pior.ri].filter(o => o.sel && !o.sel.fix && o.all.length > 1 && !bloq.has(o))
+        .sort((u, v) => Math.hypot(FIXED[u.ri][0][0] - cx, FIXED[u.ri][0][1] - cy) - Math.hypot(FIXED[v.ri][0][0] - cx, FIXED[v.ri][0][1] - cy));
+      const U = [pior, ...[...bloq.keys()].sort((u, v) => bloq.get(v) - bloq.get(u)), ...perto].slice(0, 5);
+      const ant = U.map(it => it.sel), custoAnt = ant.reduce((t, q) => t + q.cost, 0);
+      U.forEach(it => { it.sel = null; });
+      const op = U.map(it => it.all.filter(c => free(it, c)).slice(0, 70));
+      if (op.some(o => !o.length)){ U.forEach((it, i) => { it.sel = ant[i]; }); continue; }
+      const ord = U.map((it, i) => i).sort((a, b) => op[a].length - op[b].length);
+      const minR = []; for (let k = ord.length - 1, acc = 0; k >= 0; k--){ acc += op[ord[k]][0].cost; minR[k] = acc; }
+      let melhor = null, mc = custoAnt - 0.3, nos = 0; const esc = [];
+      const bb = (k, soma) => {
+        if (++nos > 60000) return;
+        if (k === ord.length){ mc = soma; melhor = esc.slice(); return; }
+        if (soma + minR[k] >= mc) return;
+        const i = ord[k];
+        for (const q of op[i]){
+          if (soma + q.cost + (k + 1 < ord.length ? minR[k + 1] : 0) >= mc) break;
+          let ok = true; for (let t = 0; t < k; t++) if (clash(q, esc[t])){ ok = false; break; }
+          if (!ok) continue;
+          esc[k] = q; bb(k + 1, soma + q.cost);
+        }
+      };
+      bb(0, 0);
+      if (melhor) ord.forEach((i, k) => { U[i].sel = melhor[k]; }); else U.forEach((it, i) => { it.sel = ant[i]; });
+    }
+  }
+  for (const it of items) it.cands = it.all;
+  // resultado
+  let pen = 0, maxEx = 0, out = 0, excSum = 0, menores = 0, longe = 0; const far = [];
+  const prob = new Set();
+  for (const it of items){ const q = it.sel; if (!q){ if (!vazio(it.r)){ pen += 100; prob.add(it.r.id); } continue; }   // sem lugar livre nenhum: este tamanho não serve
+    out += q.out || 0; maxEx = Math.max(maxEx, q.ex || 0); if (it.step > (it.geo || 0)) menores += STEPS[it.step] < 0.76 ? 2 : 1;
+    // afastamento além do que a própria geografia já exige (pontas do estado, nomes fixos vizinhos)
+    const minEx = it.cands.length ? Math.min(...it.cands.map(c => c.ex || 0)) : 0, lim = Math.max(3, minEx + 1.5);
+    longe += Math.max(0, (q.ex || 0) - EX_MAX);
+    if ((q.ex || 0) > lim){ far.push(it.r.name + ':' + q.ex.toFixed(1)); excSum += q.ex - lim; }
+    for (const o of nb[it.ri]) if (o.ri > it.ri && o.sel){ if (clash(q, o.sel)){ prob.add(it.r.id); prob.add(o.r.id); } for (const a1 of q.R) for (const b1 of o.sel.R) if (Math.min(a1[2], b1[2]) - Math.max(a1[0], b1[0]) > 0.02 && Math.min(a1[3], b1[3]) - Math.max(a1[1], b1[1]) > 0.02) pen++; }
+    for (const f of ALLFIX) if (f.ri !== it.ri) for (const a1 of q.R) if (Math.min(a1[2], f.q[2]) - Math.max(a1[0], f.q[0]) > 0.02 && Math.min(a1[3], f.q[3]) - Math.max(a1[1], f.q[1]) > 0.02) pen++;
+    if (it.step === 0) ROW_K.delete(it.r.id);
+    const [x0, y0] = iconXY(it.r);
+    AUTO.set(it.r.id, [q.x - x0, q.y - y0]);
+    if (FIXED[it.ri][1]) NAME_POS.set(it.r.id, FIXED[it.ri][1]);
+    if (q.left) TEMP_LEFT.add(it.r.id);
+    if (q.below) TEMP_BELOW.add(it.r.id);
+    if (q.stack) STACKED.add(it.r.id);
+  }
+  return {prob: [...prob], ok: pen === 0 && out === 0 && longe === 0 && excSum <= 6 && menores <= 3, valid: pen === 0 && out === 0 && !prob.size, excSum: excSum + 2*menores + 25*longe, longe, pen, out, maxEx, far};
+}
+let AUTO_KEY = "", AUTO_INFO = null, LAST_K = null, AJUSTE = null; const MEMO_K = new Map();
+const dadosAuto = () => JSON.stringify([S.opts.ptSede, S.opts.temps, S.opts.autoSpread, S.opts.names, S.opts.nameSize, S.rows.map(r => [r.id, r.name, r.tempo, String(r.tmax ?? "").length, String(r.tmin ?? "").length, r.dx, r.dy])]);
+const chaveAuto = () => JSON.stringify([S.opts.ptSede, S.opts.temps, S.opts.autoSpread, S.opts.names, S.opts.iconScale, S.opts.nameSize, S.rows.map(r => [r.id, r.name, r.tempo, String(r.tmax ?? "").length, String(r.tmin ?? "").length, r.dx, r.dy])]);
 function computeAuto(){
-  const key = JSON.stringify([S.opts.temps, S.opts.autoSpread, S.opts.names, S.opts.iconScale, S.opts.nameSize, S.rows.map(r => [r.id, r.name, r.tempo, r.tmax, r.tmin, r.dx, r.dy])]);
+  const key = chaveAuto();
   if (key === AUTO_KEY) return;            // nada mudou desde o último cálculo
-  AUTO_KEY = key; AUTO = new Map(); NAME_UP = new Set();
+  AUTO_KEY = key; AUTO = new Map(); NAME_UP = new Set(); NAME_POS = new Map(); TEMP_LEFT = new Set(); TEMP_BELOW = new Set(); EFF_K = null; AUTO_INFO = null; ROW_K = new Map(); STACKED = new Set();
+  if (S.opts.ptSede){
+    // O tamanho é sempre o escolhido pela pessoa (nada de redução automática). Primeiro tenta com os ícones
+    // bem perto das sedes; se não couber sem sobrepor, aceita afastar um pouco mais (com linha curta).
+    const run = (k, ex) => { const ck = dadosAuto() + "|" + k; if (MEMO_K.has(ck)) return MEMO_K.get(ck); EX_MAX = ex; EFF_K = k; AUTO = new Map(); NAME_POS = new Map(); TEMP_LEFT = new Set(); TEMP_BELOW = new Set(); ROW_K = new Map(); STACKED = new Set(); const res = layoutSede(); EX_MAX = EX_PERTO; const o = {k, res, A:AUTO, N:NAME_POS, T:TEMP_LEFT, TB:TEMP_BELOW, RK:ROW_K, ST:STACKED}; if (MEMO_K.size > 40) MEMO_K.clear(); MEMO_K.set(ck, o); return o; };
+    // Tamanho sempre o escolhido (nunca diminui). Se não couber, só os municípios apertados ganham permissão
+    // de se afastar, um degrau por vez (linha fina até o ponto) — o mínimo necessário para não sobrepor
+    // nem sair de Minas; quem tem espaço continua colado no próprio ponto.
+    // Limite real: se nem afastando com linha couber sem sobrepor/sair de Minas, fica no maior tamanho que cabe
+    // (procura rápida por bissecção, de 5 em 5%) e avisa uma vez.
+    let s0 = S.opts.iconScale || 1, r1 = run(s0, EX_PERTO);
+    if (S.opts.autoSpread && !r1.res.valid){
+      const st = v => Math.round(v*20)/20;
+      let lo = 0.2, hi = s0, best = null;
+      const prev = LAST_K && LAST_K.dados === dadosAuto() && LAST_K.ok ? LAST_K.k : null;
+      if (prev != null && prev < s0){ lo = prev; best = run(prev, EX_PERTO); }
+      while (hi - lo > 0.05 + 1e-6){ const mid = st((lo + hi)/2); if (mid <= lo + 1e-6 || mid >= hi - 1e-6) break; const x = run(mid, EX_PERTO); if (x.res.valid){ lo = mid; best = x; } else hi = mid; }
+      if (!best || !best.res.valid){ let k = st(lo); best = run(k, EX_PERTO); while (!best.res.valid && k > 0.2 + 1e-6){ k = st(k - 0.05); best = run(k, EX_PERTO); } }
+      if (best.k < s0 - 1e-6){
+        AJUSTE = {de: Math.round(s0*100), para: Math.round(best.k*100)};
+        S.opts.iconScale = best.k; s0 = best.k; r1 = best;
+        setTimeout(() => { fillOpts(); persist(); }, 0);
+      }
+    }
+    EFF_K = r1.k === s0 ? null : r1.k; AUTO = r1.A; NAME_POS = r1.N; TEMP_LEFT = r1.T; TEMP_BELOW = r1.TB || new Set(); ROW_K = r1.RK; STACKED = r1.ST;
+    AUTO_INFO = r1; LAST_K = {s0, k: r1.k, ok: r1.res.valid, dados: dadosAuto()}; AUTO_KEY = chaveAuto();
+    return; }
   // cada retângulo: [x1, y1, x2, y2, tipo] relativo ao ponto do ícone; tipo 0 = ícone/temperatura, 1 = nome
+  const PT = !!S.opts.ptSede;
   const G = S.rows.map(r => { const [x, y] = iconXY(r); const g = groupRects(r);
-    const rects = [...g.solid.map(q => [...q, 0]), ...g.name.map(q => [...q, 1])];
+    const rects = [...g.solid.map(q => [...q, 0]), ...(PT ? [] : g.name.map(q => [...q, 1]))];
     return {r, x, y, ox:0, oy:0, okx:0, oky:0, mob: isPinned(r) ? 0 : 1, rects, below:g.below, above:g.above}; });
-  if (!S.opts.autoSpread){ G.forEach(g => AUTO.set(g.r.id, [0,0])); return; }
+  if (PT) for (const r of S.rows){                              // ponto + nome de cada sede: fixos
+    const [sx, sy] = sedeXY(r), rects = [[-PT_R-0.3, -PT_R-0.3, PT_R+0.3, PT_R+0.3, 0]];
+    if (S.opts.names){ const q = nomeSedeRect(r); rects.push([q[0]-sx, q[1]-sy, q[2]-sx, q[3]-sy, 1]); }
+    G.push({r:null, x:sx, y:sy, ox:0, oy:0, okx:0, oky:0, mob:0, rects});
+  }
+  if (!S.opts.autoSpread){ G.forEach(g => g.r && AUTO.set(g.r.id, [0,0])); return; }
   const bbox = g => { let x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9;
     for (const q of g.rects){ if (q[0] < x1) x1 = q[0]; if (q[1] < y1) y1 = q[1]; if (q[2] > x2) x2 = q[2]; if (q[3] > y2) y2 = q[3]; }
     g.bb = [x1, y1, x2, y2]; };
@@ -308,14 +744,40 @@ function computeAuto(){
     // se o nome ainda ficar coberto, tenta colocá-lo acima do ícone
     if (pass > 0 || !S.opts.names) break;
     let flipped = false;
-    for (const g of G){ const ni = g.rects.findIndex(q => q[4] === 1); if (ni < 0) continue;
+    for (const g of G){ if (!g.r || !g.mob) continue;   // pontos/nomes fixos da sede não trocam de lado
+      const ni = g.rects.findIndex(q => q[4] === 1); if (ni < 0) continue;
       const cur = overlapArea(g, g.below); if (cur < 0.5) continue;
       if (overlapArea(g, g.above) < cur*0.5){ g.rects[ni] = [...g.above, 1]; bbox(g); NAME_UP.add(g.r.id); flipped = true; } }
     if (!flipped) break;
   }
-  G.forEach(g => AUTO.set(g.r.id, [g.ox, g.oy]));
+  G.forEach(g => g.r && AUTO.set(g.r.id, [g.ox, g.oy]));
 }
 const finalXY = r => { const [x, y] = iconXY(r), a = AUTO.get(r.id) || [0,0]; return [x + a[0], y + a[1]]; };
+
+/* ================= base cartográfica da equipe (previsao/data/base-mg.js) =================
+   Vetores já projetados no quadro do mapa: nítidos a 300 dpi, leves e sem imagens externas.
+   Tudo é recortado pelo contorno de Minas Gerais. */
+const BASE = (typeof window !== "undefined" && window.BASE_CARTO) || null;
+// Se o OpenStreetMap estiver escolhido mas não tiver carregado, a base vetorial aparece no lugar dele.
+const useBase = k => !!S.opts[k] || (typeof liveById === "function" && !!liveById(S.bgActive) && !liveById(S.bgActive).src);
+// A base de rios, rodovias e áreas urbanas foi retirada da ferramenta (1.14): o fundo vem dos mapas base.
+const baseOn = () => false;
+function baseCartoSVG(){
+  if (!baseOn()) return "";
+  const o = [`<g clip-path="url(#mapclipMG)">`];
+  if (useBase("baseUrb") && BASE.urbano) o.push(`<path d="${BASE.urbano}" fill="#e4ddd3" fill-rule="nonzero" stroke="none"/>`);
+  if (useBase("baseRod") && BASE.rodovias){
+    for (const [w, sw] of [["1", .16], ["2", .24], ["3", .34]])
+      if (BASE.rodovias[w]) o.push(`<path d="${BASE.rodovias[w]}" fill="none" stroke="#c2b6a4" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`);
+  }
+  if (useBase("baseHidro")){
+    for (const [w, sw] of [["1", .22], ["2", .34], ["3", .5]])
+      if (BASE.rios && BASE.rios[w]) o.push(`<path d="${BASE.rios[w]}" fill="none" stroke="#7fb2dc" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`);
+    if (BASE.represas) o.push(`<path d="${BASE.represas}" fill="#b4d4ec" stroke="#7fb2dc" stroke-width=".12" stroke-linejoin="round"/>`);
+  }
+  o.push(`</g>`);
+  return o.join("");
+}
 
 /* ================= desenho do layout (SVG em milímetros) ================= */
 function renderSVG({forExport=false} = {}){
@@ -341,13 +803,15 @@ function renderSVG({forExport=false} = {}){
   /* ---- mapa ---- */
   o.push(`<g transform="translate(${MAP.x} ${MAP.y})"><g clip-path="url(#mapclip)">`);
   o.push(`<rect width="${MAP.w}" height="${MAP.h}" fill="#ffffff"/>`);
+  o.push(`<clipPath id="mapclipMG"><path d="${GEO.mg}"/></clipPath>`);
   const bg = activeBg();
-  if (bg){
-    const b = bg.bounds;
-    o.push(`<image href="${bg.src}" xlink:href="${bg.src}" x="${f2((b.w-MAP.xmin)*K)}" y="${f2((MAP.ymax-b.n)*K)}" width="${f2((b.e-b.w)*K)}" height="${f2((b.n-b.s)*K)}" preserveAspectRatio="none" opacity="${bg.opacity ?? 1}"/>`);
+  if (bg && bg.src){
+    const b = bg.bounds || fullExtent(), clip = S.opts.bgClipMG !== false;   // por padrão o fundo aparece só dentro de Minas, como nos layouts do QGIS
+    o.push(`${clip ? `<g clip-path="url(#mapclipMG)">` : ""}<image href="${bg.src}" xlink:href="${bg.src}" x="${f2((b.w-MAP.xmin)*K)}" y="${f2((MAP.ymax-b.n)*K)}" width="${f2((b.e-b.w)*K)}" height="${f2((b.n-b.s)*K)}" preserveAspectRatio="none" opacity="${bg.opacity ?? 1}"/>${clip ? "</g>" : ""}`);
   }
   o.push(`<path d="${GEO.states}" fill="none" stroke="#000" stroke-width="0.22" stroke-linejoin="round"/>`);
-  if (!bg || S.opts.mgFill) o.push(`<path d="${GEO.mg}" fill="#ecf4f5" stroke="none"/>`);
+  if (!bg || !bg.src || S.opts.mgFill) o.push(`<path d="${GEO.mg}" fill="#ecf4f5" stroke="none"/>`);
+  o.push(baseCartoSVG());
   if (S.opts.mun) o.push(`<path d="${GEO.munLines}" fill="none" stroke="#c9d6dc" stroke-width="0.09" stroke-linejoin="round"/>`);
   if (S.opts.meso) o.push(`<path d="${GEO.mesoLines}" fill="none" stroke="#000" stroke-width="0.5" stroke-linejoin="round"/>`);
   o.push(`<path d="${GEO.mg}" fill="none" stroke="#000" stroke-width="0.6" stroke-linejoin="round"/>`);
@@ -367,24 +831,38 @@ function renderSVG({forExport=false} = {}){
   }
   // ícones, nomes e temperaturas em camadas separadas: as temperaturas ficam sempre por cima
   const tsz = 10*PT, ns = S.opts.nameSize || 3.5;
-  const L_ICON = [], L_NAME = [], L_TEMP = [];
+  const L_ICON = [], L_NAME = [], L_TEMP = [], L_PT = [], L_LINE = [];
   computeAuto();
   for (const r of S.rows){
     const c = CAT[r.tempo] || CAT[NONE];
     const [px, py] = finalXY(r);
     const x = px - MAP.x, y = py - MAP.y;
-    const [w, h] = iconDims(c, S.opts.iconScale || 1);
+    const [w, h] = iconDims(c, iconKr(r));
+    const tsz = tempSz(r);
     const [mx, mn] = shownTemps(r);
-    L_ICON.push(`<g class="mk" data-id="${r.id}">` + (forExport ? "" : `<rect class="hit" x="${f2(x-w/2-1)}" y="${f2(y-h/2-1)}" width="${f2(w+2)}" height="${f2(h+2)}" rx="2" fill="transparent"/>`)
+    const vz = vazio(r);
+    if (!vz) L_ICON.push(`<g class="mk" data-id="${r.id}">` + (forExport ? "" : `<rect class="hit" x="${f2(x-w/2-1)}" y="${f2(y-h/2-1)}" width="${f2(w+2)}" height="${f2(h+2)}" rx="2" fill="transparent"/>`)
       + `<image href="${c.src}" xlink:href="${c.src}" x="${f2(x-w/2)}" y="${f2(y-h/2)}" width="${f2(w)}" height="${f2(h)}" preserveAspectRatio="xMidYMid meet"/></g>`);
-    const nyTop = NAME_UP.has(r.id) ? y-h/2-0.3-(ASC+DESC)*ns : y+h/2+0.3;
-    if (S.opts.names) L_NAME.push(`<g class="mk" data-id="${r.id}"><text x="${f2(x)}" y="${f2(nyTop+ASC*ns)}" font-family="${FONT}" font-size="${f2(ns)}" font-weight="700" fill="${navy}" text-anchor="middle" stroke="#fff" stroke-width="${f2(ns*0.3)}" stroke-linejoin="round" paint-order="stroke">${esc(r.name)}</text></g>`);
-    const lab = (v, col, base) => `<text x="${f2(x+w/2+1.3)}" y="${f2(base)}" font-family="${FONT}" font-size="${f2(tsz)}" font-weight="700" fill="${col}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round" paint-order="stroke">${esc(fmtTemp(v))}°C</text>`;
+    if (S.opts.ptSede){
+      const [sx, sy] = sedeXY(r), qx = sx - MAP.x, qy = sy - MAP.y;
+      // linha fina do ponto até o ícone quando ele precisou ficar mais afastado
+      const Ln = !vz && !STACKED.has(r.id) ? linhaIcone(qx, qy, x, y, w, h) : null;
+      if (Ln) L_LINE.push(`<line x1="${f2(Ln[0])}" y1="${f2(Ln[1])}" x2="${f2(Ln[2])}" y2="${f2(Ln[3])}" stroke="#ffffff" stroke-width="0.9" stroke-linecap="round" opacity=".85"/><line x1="${f2(Ln[0])}" y1="${f2(Ln[1])}" x2="${f2(Ln[2])}" y2="${f2(Ln[3])}" stroke="#2b3440" stroke-width="0.35" stroke-linecap="round"/>`);
+      L_PT.push(`<circle cx="${f2(qx)}" cy="${f2(qy)}" r="${PT_R}" fill="#ffffff" stroke="#1f2328" stroke-width="0.25"/>`);
+      const nr = NAME_POS.get(r.id), ncx = nr ? (nr[0]+nr[2])/2 - MAP.x : qx, nty = nr ? nr[1] - MAP.y : qy + PT_R + 0.35;
+      if (S.opts.names) L_NAME.push(`<text x="${f2(ncx)}" y="${f2(nty + ASC*ns)}" font-family="${FONT}" font-size="${f2(ns)}" font-weight="700" fill="${navy}" text-anchor="middle" stroke="#fff" stroke-width="${f2(ns*0.3)}" stroke-linejoin="round" paint-order="stroke">${esc(r.name)}</text>`);
+    }
+    const nyTop = vz ? y - (ASC+DESC)*ns/2 : NAME_UP.has(r.id) ? y-h/2-0.3-(ASC+DESC)*ns : y+h/2+0.3;
+    if (S.opts.names && !S.opts.ptSede) L_NAME.push(`<g class="mk" data-id="${r.id}"><text x="${f2(x)}" y="${f2(nyTop+ASC*ns)}" font-family="${FONT}" font-size="${f2(ns)}" font-weight="700" fill="${navy}" text-anchor="middle" stroke="#fff" stroke-width="${f2(ns*0.3)}" stroke-linejoin="round" paint-order="stroke">${esc(r.name)}</text></g>`);
+    const tl = TEMP_LEFT.has(r.id), tb = TEMP_BELOW.has(r.id);
+    const lab = (v, col, base) => `<text x="${f2(tb ? x : tl ? x-w/2-1.3 : x+w/2+1.3)}" y="${f2(base)}"${tb ? ' text-anchor="middle"' : tl ? ' text-anchor="end"' : ''} font-family="${FONT}" font-size="${f2(tsz)}" font-weight="700" fill="${col}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round" paint-order="stroke">${esc(fmtTemp(v))}°C</text>`;
     // com as duas: máxima em cima e mínima embaixo; com uma só: centralizada ao lado do ícone
     const one = y + (ASC-DESC)/2*tsz, both = mx != null && mn != null;
-    if (mx != null || mn != null) L_TEMP.push(`<g class="mk" data-id="${r.id}">` + (mx != null ? lab(mx, "#cc2029", both ? y + 0.4 - DESC*tsz : one) : "") + (mn != null ? lab(mn, "#1764bf", both ? y + 0.4 + ASC*tsz : one) : "") + `</g>`);
+    const lhT = (ASC+DESC)*tsz*0.92, yb = y + h/2*0.98 + 0.15 + 0.15 + ASC*tsz;   // temperaturas embaixo: máxima e, abaixo, mínima
+    const yMx = tb ? yb : (both ? y + 0.4 - DESC*tsz : one), yMn = tb ? (mx != null ? yb + lhT : yb) : (both ? y + 0.4 + ASC*tsz : one);
+    if (!vz && (mx != null || mn != null)) L_TEMP.push(`<g class="mk" data-id="${r.id}">` + (mx != null ? lab(mx, "#cc2029", yMx) : "") + (mn != null ? lab(mn, "#1764bf", yMn) : "") + `</g>`);
   }
-  o.push(...L_ICON, ...L_NAME, ...L_TEMP);
+  o.push(...L_LINE, ...L_ICON, ...L_PT, ...L_NAME, ...L_TEMP);   // ícone, ponto da sede, nome e, por cima, as temperaturas
   o.push(`</g>`);
   o.push(`<rect width="${MAP.w}" height="${MAP.h}" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>`);
   o.push(`</g>`);
@@ -400,20 +878,20 @@ function renderSVG({forExport=false} = {}){
     o.push(`<text x="${f2(x)}" y="${f2(MAP.y+MAP.h+2.46133+ASC*gs)}" font-family="${FONT}" font-size="${f2(gs)}" fill="${gc}" text-anchor="middle">${lbl}</text>`);
   }
   // seta norte
-  o.push(`<svg x="19.3411" y="167.133" width="7.7942" height="9.08866" viewBox="0 0 61.06 96.62">${NORTH_ARROW}</svg>`);
+  o.push(`<svg x="19.3411" y="166.3" width="7.7942" height="9.08866" viewBox="0 0 61.06 96.62">${NORTH_ARROW}</svg>`);
   // escala gráfica (caixa simples, 2 × 50 km)
-  { const seg = 8.35894, ss = 9*PT, bx = 11.6913+1+textW("0",ss)/2, by = 184.8, ly = by - 1.6 - DESC*ss;
+  { const seg = 8.35894, ss = 9*PT, bx = 11.6913+1+textW("0",ss)/2, by = 184.0, ly = by - 1.6 - DESC*ss;
     o.push(`<rect x="${f2(bx)}" y="${by}" width="${seg}" height="3" fill="#000" stroke="#000" stroke-width=".3"/>`);
     o.push(`<rect x="${f2(bx+seg)}" y="${by}" width="${seg}" height="3" fill="#fff" stroke="#000" stroke-width=".3"/>`);
     [["0",0],["50",seg],["100",2*seg]].forEach(([t,dx]) => o.push(`<text x="${f2(bx+dx)}" y="${f2(ly)}" font-family="${FONT}" font-size="${f2(ss)}" fill="#000" text-anchor="middle">${t}</text>`));
     o.push(`<text x="${f2(bx+2*seg+textW("100",ss)/2+1)}" y="${f2(ly)}" font-family="${FONT}" font-size="${f2(ss)}" fill="#000">km</text>`); }
 
   /* ---- legenda ---- */
-  o.push(textBlock({lines:["Legenda"], x:230.723+55.5338/2, yTop:22.7706, h:6.78946, size:16*PT, weight:700, fill:navy, anchor:"middle"}));
-  o.push(`<rect x="231.954" y="34.1727" width="55.9197" height="0.266644" fill="rgb(138,187,228)"/>`);
+  o.push(textBlock({lines:["Legenda"], x:COL, yTop:22.7706, h:6.78946, size:16*PT, weight:700, fill:navy, anchor:"middle"}));
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="34.1727" width="${LIN_W}" height="0.266644" fill="rgb(138,187,228)"/>`);
   { const cats = usedCats();
     // área da legenda: entre a linha abaixo do título e a linha da validade, centrada sob "Legenda"
-    const top = 36.6, bottom = 157.8, cx = 230.723 + 55.5338/2, maxW = 61.5;
+    const top = 36.6, bottom = 157.8, cx = COL, maxW = 61.5;
     const KEYF = 0.62, KEYGAP = 1.6;                 // linhas da chave de temperatura são mais baixas
     const KEYS = [];   // a legenda mostra só as condições do tempo (sem a chave de máxima/mínima)
     const units = Math.max(1, cats.length + KEYS.length*KEYF);
@@ -442,20 +920,27 @@ function renderSVG({forExport=false} = {}){
       y += h;
     });
   }
-  o.push(`<rect x="232.338" y="159.499" width="51.2776" height="0.256388" fill="rgb(138,187,228)"/>`);
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="159.499" width="${LIN_W}" height="0.256388" fill="rgb(138,187,228)"/>`);
   const vt = validityText(), val = vt || "Validade não informada";
-  o.push(textBlock({lines:[val], x:223.857+67.7588/2, yTop:160.906, h:8.28892, size:fitSize([val],10*PT,67.7,400), fill: vt ? navy : "#8a97a8", anchor:"middle"}));
-  o.push(`<rect x="232.338" y="170.345" width="51.2776" height="0.256388" fill="rgb(138,187,228)"/>`);
+  o.push(textBlock({lines:[val], x:COL, yTop:160.906, h:8.28892, size:fitSize([val],10*PT,67.7,400), fill: vt ? navy : "#8a97a8", anchor:"middle"}));
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="170.345" width="${LIN_W}" height="0.256388" fill="rgb(138,187,228)"/>`);
   const year = (S.date || todayISO()).slice(0,4);
-  const cred = (S.texts.credits || "").replace(/\{ano\}/g, year).split("\n");
-  o.push(textBlock({lines:cred, x:228.723+59.3284/2, yTop:172.909, h:13.3322, size:fitSize(cred,6.68628*PT,62,400), fill:navy, anchor:"middle"}));
+  let cred = (S.texts.credits || "").replace(/\{ano\}/g, year).split("\n")
+    .map(l => baseOn() && /^\s*Base cartográfica\s*:/i.test(l) ? `Base cartográfica: ${BASE.credito}` : l);
+  { const ab = activeBg();
+    if (ab && ab.src && ab.credito){
+      const i = cred.findIndex(l => /^\s*(Basemap|Mapa base|Fundo)\s*:/i.test(l));
+      if (i >= 0) cred[i] = `Mapa base: ${ab.credito}`;
+      else { const j = cred.findIndex(l => /^\s*Base cartográfica\s*:/i.test(l)); cred.splice(j >= 0 ? j + 1 : cred.length, 0, `Mapa base: ${ab.credito}`); }
+    } }
+  o.push(textBlock({lines:cred, x:COL, yTop:172.909, h:13.3322, size:fitSize(cred,6.68628*PT,62,400), fill:navy, anchor:"middle"}));
 
   /* ---- rodapé ---- */
-  [[4.30732,200.393,289.001,20.511,3.28177],[4.51243,200.598,288.59,20.1008,3.07666],[4.71754,200.803,288.18,19.6906,2.87155]]
+  [[4.30732,194.2,289.001,14.3,3.28177],[4.51243,194.4,288.59,13.9,3.07666],[4.71754,194.6,288.18,13.5,2.87155]]
     .forEach(([x,y,w,h,r]) => o.push(`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="rgb(57,152,207)" fill-opacity=".02"/>`));
-  o.push(`<rect x="4.92265" y="201.008" width="287.77" height="19.2804" rx="2.46133" fill="rgb(249,252,255)" stroke="rgb(135,196,239)" stroke-width="0.307666"/>`);
+  o.push(`<rect x="4.92265" y="194.8" width="287.77" height="13.1" rx="2.46133" fill="rgb(249,252,255)" stroke="rgb(135,196,239)" stroke-width="0.307666"/>`);
   for (const it of logoLayout()){
-    if (it.sep != null){ o.push(`<rect x="${f2(it.sep)}" y="205.931" width="0.276899" height="10.0504" fill="rgb(32,153,234)"/>`); continue; }
+    if (it.sep != null){ o.push(`<rect x="${f2(it.sep)}" y="197.4" width="0.276899" height="7.9" fill="rgb(32,153,234)"/>`); continue; }
     const {s, L, x, w, h} = it, cy = LOGO_Y + LOGO_H/2;
     if (L) o.push(`<image href="${L.src}" xlink:href="${L.src}" x="${f2(x)}" y="${f2(cy-h/2)}" width="${f2(w)}" height="${f2(h)}"/>`);
     else if (!forExport){
@@ -463,8 +948,10 @@ function renderSVG({forExport=false} = {}){
       o.push(`<text x="${f2(x+w/2)}" y="${f2(cy+1)}" font-family="${FONT}" font-size="2.6" fill="#8fa8c2" text-anchor="middle">${esc(s.name)}</text>`);
     }
   }
-  const foot = (S.texts.footer || "").split("\n");
-  o.push(textBlock({lines:foot, x:200.624, yTop:203.265, h:15.1782, size:fitSize(foot, 9*PT, 91.5, 400), fill:navy}));
+  // texto do rodapé: quebra de linha automática na largura do quadro, com a maior letra que couber na altura
+  // (editar o texto não encolhe mais tudo numa linha só)
+  const ft = wrapFit(S.texts.footer || "", 90.5, 11.5, 8.5*PT, 5.5*PT);
+  o.push(textBlock({lines:ft.lines, x:200.624, yTop:195.6, h:11.5, size:ft.size, fill:navy}));
   o.push(`</svg>`);
   return o.join("");
 }
@@ -476,6 +963,11 @@ function drawPreview(){
   cancelAnimationFrame(raf);
   raf = requestAnimationFrame(() => {
     paper.innerHTML = renderSVG();
+    const so = $("#szOut");
+    if (so){ const u = Math.round((S.opts.iconScale||1)*100), e = Math.round(iconK()*100);
+      so.textContent = `${u}%`; void e; so.title = "";
+      if (AJUSTE){ const a = AJUSTE; AJUSTE = null; avisoTamanho(`Limite: ${a.para}% é o maior tamanho em que todos os ícones cabem sem se sobrepor e dentro de Minas.`); }
+    }
     if (focusId){
       const g = paper.querySelector(`.mk[data-id="${focusId}"] .hit`);
       if (g){ g.setAttribute("stroke", "#078fd2"); g.setAttribute("stroke-width", ".45"); g.setAttribute("stroke-dasharray", "1.2 .7"); }
@@ -500,7 +992,7 @@ paper.addEventListener("pointerdown", e => {
 paper.addEventListener("pointermove", e => {
   if (!drag) return;
   const p = svgPoint(e); const ddx = p.x - drag.sx, ddy = p.y - drag.sy;
-  if (!inMG(drag.cx0 + ddx, drag.cy0 + ddy)) return;   // fora de Minas Gerais: fica na última posição válida
+  if (!blockInMG(drag.r, drag.cx0 + ddx, drag.cy0 + ddy)) return;   // fora de Minas Gerais: fica na última posição válida
   if (Math.hypot(ddx, ddy) > .4) drag.moved = true;
   drag.parts.forEach(el => el.setAttribute("transform", `translate(${ddx} ${ddy})`));
   drag.last = [ddx, ddy];
@@ -684,12 +1176,22 @@ const tx = {region:$("#txRegion"), footer:$("#txFooter"), credits:$("#txCredits"
 function fillTexts(){ for (const k in tx) tx[k].value = S.texts[k]; }
 for (const k in tx) tx[k].addEventListener("input", () => { S.texts[k] = tx[k].value; persist(); drawPreview(); });
 $("#btnTxReset").addEventListener("click", () => { S.texts = {...DEFAULT_TEXTS}; fillTexts(); persist(); drawPreview(); });
-const op = {mun:$("#opMun"), meso:$("#opMeso"), mesoNames:$("#opMesoNames"), states:$("#opStates"), names:$("#opNames"), autoSpread:$("#opAuto")};
-op.mgFill = $("#opMgFill");
+const op = {mun:$("#opMun"), meso:$("#opMeso"), mesoNames:$("#opMesoNames"), states:$("#opStates"), names:$("#opNames"), autoSpread:$("#opAuto"), ptSede:$("#opPtSede")};
+op.mgFill = $("#opMgFill"); op.bgClipMG = $("#opBgClip");
+
 const rng = {iconScale:[$("#opIconScale"), $("#outIconScale"), v => Math.round(v*100)+"%"], nameSize:[$("#opNameSize"), $("#outNameSize"), v => (v/PT).toFixed(0)+" pt"]};
-function fillOpts(){ for (const k in op) op[k].checked = !!S.opts[k]; for (const k in rng){ rng[k][0].value = S.opts[k]; rng[k][1].textContent = rng[k][2](S.opts[k]); }
+{ const st = document.createElement("style"); st.textContent = "#szAviso{position:absolute;z-index:50;background:#1f2328;color:#fff;font-size:12px;line-height:1.35;padding:6px 9px;border-radius:6px;max-width:250px;box-shadow:0 4px 14px rgba(0,0,0,.25);pointer-events:none;transition:opacity .3s}"; document.head.appendChild(st); }
+let avisoT = 0;
+function avisoTamanho(txt){
+  const so = $("#szOut"); if (!so || !txt) return;
+  let b = document.getElementById("szAviso"); if (!b){ b = document.createElement("div"); b.id = "szAviso"; document.body.appendChild(b); }
+  const r = so.getBoundingClientRect(); b.textContent = txt; b.style.opacity = "1";
+  b.style.left = Math.max(8, r.left + window.scrollX - 70) + "px"; b.style.top = (r.bottom + window.scrollY + 6) + "px";
+  clearTimeout(avisoT); avisoT = setTimeout(() => { b.style.opacity = "0"; }, 3500);
+}
+function fillOpts(){ S.opts.iconScale = Math.min(1, Math.max(0.2, +S.opts.iconScale || 0.5)); for (const k in op) op[k].checked = !!S.opts[k]; for (const k in rng){ rng[k][0].value = S.opts[k]; rng[k][1].textContent = rng[k][2](S.opts[k]); }
   $("#szOut").textContent = Math.round((S.opts.iconScale||1)*100) + "%"; }
-function stepIcons(d){ S.opts.iconScale = Math.round(Math.min(1.6, Math.max(0.6, (S.opts.iconScale||1) + d))*100)/100; fillOpts(); persist(); drawPreview(); }
+function stepIcons(d){ S.opts.iconScale = Math.round(Math.min(1, Math.max(0.2, (S.opts.iconScale||1) + d))*100)/100; fillOpts(); persist(); drawPreview(); }
 $("#szMinus").addEventListener("click", () => stepIcons(-0.05));
 $("#szPlus").addEventListener("click", () => stepIcons(0.05));
 for (const k in op) op[k].addEventListener("change", () => { S.opts[k] = op[k].checked; persist(); drawPreview(); });
@@ -709,7 +1211,187 @@ const idb = (() => {
     t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error); }));
   return { all: () => tx("readonly", st => st.getAll()), put: v => tx("readwrite", st => st.put(v)), del: id => tx("readwrite", st => st.delete(id)) };
 })();
-const activeBg = () => BG.find(b => b.id === S.bgActive) || null;
+const activeBg = () => { const b = BG.find(b => b.id === S.bgActive) || null; return b && (b.src || b.live) ? b : null; };
+/* Fundo da equipe: imagem publicada no GitHub em previsao/data/fundo.js (window.MAPA_FUNDO).
+   Vale para todos; não fica no IndexedDB. Só a opacidade escolhida fica salva no navegador. */
+const MF = (typeof window !== "undefined" && window.MAPA_FUNDO && window.MAPA_FUNDO.src && window.MAPA_FUNDO.bounds) ? window.MAPA_FUNDO : null;
+const TEAM_BG = MF ? {id:"equipe", team:true, name:`Fundo da equipe — ${MF.nome || "mapa base"}`, src:MF.src, bounds:{...MF.bounds}, opacity:(S.opts.teamOp ?? MF.opacidade ?? 1), credito:MF.credito || ""} : null;
+/* Mapas base carregados ao vivo a cada sessão (imagens do servidor de cada projeto).
+   Ordem: OSM padrão (principal) -> OSM França (reserva 1) -> OSM Alemanha (reserva 2), todos no estilo do OSM padrão.
+   Se o principal não responder, a ferramenta passa sozinha para a reserva seguinte e avisa.
+   A imagem é montada no navegador e reprojetada de Web Mercator para latitude/longitude.
+   Não é guardada no IndexedDB nem vira fundo.js: os servidores não permitem uso offline.
+   O navegador usa o próprio cache HTTP, como em qualquer mapa na web. */
+const OSM_Z = 8, OSM_W = 3400;
+const sub = (x, y) => "abc"[(x + y) % 3];
+// OpenFreeMap: gratuito, sem chave e sem limite (openfreemap.org). Vetorial: o navegador desenha o mapa
+// com a biblioteca MapLibre (previsao/lib/maplibre-gl.js), e todas as camadas de texto são retiradas.
+const OFM_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+// Créditos no mesmo formato para todos os mapas: "Mapa base: © <dados> — estilo <mapa>" (cabe numa linha,
+// com o mesmo tamanho de letra em qualquer mapa).
+const LIVE = [
+  {id:"osm", nome:"OpenStreetMap — padrão", curto:"OpenStreetMap padrão", amarelo:true,
+   url:(z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+   credito:"© OpenStreetMap — estilo padrão"},
+  {id:"osmfr", nome:"OpenStreetMap França (reserva 1)", curto:"OpenStreetMap França",
+   url:(z, x, y) => `https://${sub(x, y)}.tile.openstreetmap.fr/osmfr/${z}/${x}/${y}.png`,
+   credito:"© OpenStreetMap — estilo OSM França"},
+  {id:"osmde", nome:"OpenStreetMap Alemanha (reserva 2)", curto:"OpenStreetMap Alemanha",
+   url:(z, x, y) => `https://tile.openstreetmap.de/${z}/${x}/${y}.png`,
+   credito:"© OpenStreetMap — estilo OSM Alemanha"},
+  {id:"ofm", nome:"OpenFreeMap — sem nomes", curto:"OpenFreeMap (sem nomes)", reserva:false, vector:true, style:OFM_STYLE,
+   credito:"© OpenStreetMap © OpenMapTiles — estilo OpenFreeMap"}
+];
+LIVE.forEach(L => Object.assign(L, {live:true, name:L.nome + " — da internet", src:null, bounds:null, promise:null, failed:false,
+  opacity:(S.opts["op_" + L.id] ?? (L.id === "osm" ? S.opts.osmOp : undefined) ?? 1)}));
+const OSM_BG = LIVE[0];
+if (S.bgActive === "otm") S.bgActive = "osmde";             // 1.14 inicial usava o OpenTopoMap como reserva 2
+if (S.livePref === "otm") S.livePref = "osmde";
+const liveById = id => LIVE.find(L => L.id === id) || null;
+function liveLoad(L){
+  if (L.src) return Promise.resolve(true);
+  if (L.promise) return L.promise;
+  if (L.vector){ L.promise = vectorLoad(L).catch(err => { L.promise = null; L.failed = true; throw err; }); return L.promise; }
+  L.promise = (async () => {
+    const n = 2 ** OSM_Z, T = 256;
+    const lx = lon => (lon + 180) / 360 * n * T;
+    const my = lat => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n * T; };
+    const ex = fullExtent();
+    const x0 = Math.floor(lx(ex.w) / T), x1 = Math.floor(lx(ex.e) / T), y0 = Math.floor(my(ex.n) / T), y1 = Math.floor(my(ex.s) / T);
+    const st = document.createElement("canvas"); st.width = (x1 - x0 + 1) * T; st.height = (y1 - y0 + 1) * T;
+    const g = st.getContext("2d");
+    const jobs = []; for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) jobs.push([x, y]);
+    let i = 0, falhas = 0, bloqueado = false;
+    // O servidor do OSM devolve uma imagem amarela e preta "Access blocked" quando recusa o pedido.
+    // Ela é detectada pelas listras amarelas saturadas (que não existem no estilo padrão) e nada é desenhado.
+    const tc = document.createElement("canvas"); tc.width = tc.height = 64; const tg = tc.getContext("2d", {willReadFrequently:true});
+    const ehBloqueio = bm => { tg.clearRect(0, 0, 64, 64); tg.drawImage(bm, 0, 0, 64, 64); const d = tg.getImageData(0, 0, 64, 64).data; let am = 0;
+      for (let k = 0; k < d.length; k += 4) if (d[k] > 220 && d[k+1] > 190 && d[k+2] < 70) am++; return am > 64*64*0.02; };
+    // servidor que não responde: cada imagem espera no máximo 10 s e o mapa inteiro, 30 s
+    const t0 = Date.now(); let estourou = false;
+    const work = async () => { while (i < jobs.length && !bloqueado && !estourou){ const [x, y] = jobs[i++];
+      if (Date.now() - t0 > 30000){ estourou = true; break; }
+      const ac = typeof AbortController === "function" ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), 10000);
+      try { const r = await fetch(L.url(OSM_Z, x, y), {mode:"cors", credentials:"omit", signal: ac ? ac.signal : undefined}); clearTimeout(tm);
+        if (r.status === 403 || r.status === 429){ bloqueado = true; break; }
+        if (!r.ok) throw new Error(r.status);
+        const bm = await createImageBitmap(await r.blob());
+        if (L.amarelo && ehBloqueio(bm)){ bloqueado = true; break; }
+        g.drawImage(bm, (x - x0) * T, (y - y0) * T); }
+      catch(e){ clearTimeout(tm); falhas++; if (falhas > jobs.length * 0.2) break; } } };
+    await Promise.all(Array.from({length:4}, work));          // poucas requisições ao mesmo tempo, como um mapa comum
+    if (bloqueado) throw new Error("bloqueado");
+    if (estourou) throw new Error("tempo");
+    if (falhas > jobs.length * 0.2) throw new Error("tiles");
+    const W = OSM_W, H = Math.round(OSM_W * (ex.n - ex.s) / (ex.e - ex.w));
+    const out = document.createElement("canvas"); out.width = W; out.height = H;
+    const o = out.getContext("2d"); o.imageSmoothingQuality = "high";
+    const sx = lx(ex.w) - x0 * T, sw = lx(ex.e) - lx(ex.w);
+    for (let r = 0; r < H; r++){                               // linha a linha: Mercator -> lat/lon
+      const lat = ex.n - (r + 0.5) / H * (ex.n - ex.s);
+      o.drawImage(st, sx, my(lat) - y0 * T - 0.5, sw, 1, 0, r, W, 1);
+    }
+    L.src = out.toDataURL("image/jpeg", 0.92); L.bounds = ex;
+    return true;
+  })().catch(err => { L.promise = null; L.failed = true; throw err; });
+  return L.promise;
+}
+const osmLoad = () => liveLoad(OSM_BG);
+// Arquivo aberto do computador (file://) não envia o endereço da página (Referer), e os servidores recusam.
+const osmSemEndereco = () => location.protocol === "file:" && !window.__OSM_TESTE;
+const osmNoClaude = () => !!(window.claude && typeof window.claude.use === "function") && !window.__OSM_TESTE;
+// Carrega o mapa escolhido; se não responder, passa para a reserva seguinte (só na sessão, sem mudar a preferência).
+function liveActivate(id, anterior, tentados){
+  const L = liveById(id); if (!L) return;
+  tentados = tentados || new Set(); tentados.add(L.id);
+  L.failed = false;
+  if (osmSemEndereco()){ L.failed = true;
+    showMsg("info", "Os mapas base da internet só carregam com a ferramenta aberta por um endereço da web (o painel). Aberto direto do computador, o mapa fica só com os limites do IBGE."); return; }
+  if (osmNoClaude()){ L.failed = true;
+    showMsg("info", "Nesta pré-visualização do Claude a página não pode buscar mapas na internet; o mapa fica só com os limites do IBGE. No painel, o mapa base carrega."); return; }
+  liveLoad(L).then(() => {
+      if (S.bgActive !== L.id) return;
+      renderBg(); drawPreview();
+      if (anterior){
+        showMsg("err", `<b>O mapa de fundo “${esc(anterior)}” não carregou.</b> Para o mapa não ficar sem fundo, ele foi trocado sozinho para o <b>${esc(L.curto)}</b> (os créditos já citam o novo fundo). Se preferir outro, troque em <b>Mapa de fundo</b>, abaixo da tabela de municípios. <button class="btn small ghost" type="button" data-abrirbg>Abrir Mapa de fundo</button>`);
+        histRebase(); }
+    })
+    .catch(() => {
+      if (S.bgActive !== L.id) return;
+      const prox = LIVE.find(o => o.reserva !== false && !tentados.has(o.id));   // o CARTO não entra como reserva automática
+      if (prox){ S.bgActive = prox.id; renderBg(); drawPreview(); liveActivate(prox.id, anterior || L.curto, tentados); return; }
+      showMsg("err", `<b>O mapa de fundo não carregou.</b> Nenhum dos mapas da internet respondeu agora (OpenStreetMap padrão, França e Alemanha) — pode ser a internet ou a rede bloqueando esses endereços. Por enquanto o mapa fica só com os limites do IBGE.<br><b>O que fazer:</b> abra <b>Mapa de fundo</b>, abaixo da tabela de municípios, e troque o mapa (ou escolha “Nenhum”); depois de alguns minutos, tente de novo. <button class="btn small ghost" type="button" data-abrirbg>Abrir Mapa de fundo</button> <button class="btn small ghost" type="button" data-tentarbg>Tentar de novo</button>`);
+    });
+}
+// MapLibre é carregada só quando o OpenFreeMap é escolhido (da mesma pasta do jsPDF, no GitHub)
+let mlPromise = null;
+function loadMapLibre(){
+  if (window.maplibregl) return Promise.resolve(window.maplibregl);
+  if (mlPromise) return mlPromise;
+  const s = document.querySelector('script[src*="jspdf.umd.min.js"]');
+  if (!s) return Promise.reject(new Error("sem-lib"));
+  const src = s.src.replace(/jspdf\.umd\.min\.js.*$/, "maplibre-gl.js") + (s.src.includes("?") ? s.src.slice(s.src.indexOf("?")) : "");
+  mlPromise = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = src;
+    sc.onload = () => window.maplibregl ? res(window.maplibregl) : rej(new Error("lib"));
+    sc.onerror = () => { mlPromise = null; rej(new Error("lib")); }; document.head.appendChild(sc); });
+  return mlPromise;
+}
+// Desenha o estilo vetorial (sem textos) fora da tela, em Web Mercator, e reprojeta para latitude/longitude
+async function vectorLoad(L){
+  const ml = await loadMapLibre();
+  const ac = typeof AbortController === "function" ? new AbortController() : null, tm = ac && setTimeout(() => ac.abort(), 15000);
+  const resp = await fetch(L.style, {mode:"cors", credentials:"omit", signal: ac ? ac.signal : undefined}); clearTimeout(tm);
+  if (!resp.ok) throw new Error(resp.status);
+  const style = await resp.json();
+  style.layers = (style.layers || []).filter(l => l.type !== "symbol");      // nenhum nome, número de estrada ou ícone
+  const ex = fullExtent(), W = OSM_W;
+  const world = W * 360 / (ex.e - ex.w);                                      // largura do mundo em px nesta escala
+  const my = lat => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * world; };
+  const Hm = Math.round(my(ex.s) - my(ex.n));
+  const div = document.createElement("div");
+  div.style.cssText = `position:fixed;left:-${W + 50}px;top:0;width:${W}px;height:${Hm}px;pointer-events:none`;
+  document.body.appendChild(div);
+  let map = null;
+  try {
+    let erros = 0;
+    map = new ml.Map({container: div, style, interactive: false, attributionControl: false, preserveDrawingBuffer: true,
+      pixelRatio: 1, fadeDuration: 0, bounds: [[ex.w, ex.s], [ex.e, ex.n]], fitBoundsOptions: {padding: 0}});
+    await new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error("tempo")), 45000);
+      map.on("error", () => { if (++erros > 40){ clearTimeout(t); rej(new Error("tiles")); } });
+      map.once("idle", () => { clearTimeout(t); res(); });
+    });
+    if (erros > 20) throw new Error("tiles");
+    const cv = map.getCanvas();
+    const H = Math.round(W * (ex.n - ex.s) / (ex.e - ex.w));
+    const out = document.createElement("canvas"); out.width = W; out.height = H;
+    const o = out.getContext("2d"); o.imageSmoothingQuality = "high";
+    const sy = cv.height / Hm, y0 = my(ex.n);
+    for (let r = 0; r < H; r++){                                              // linha a linha: Mercator -> lat/lon
+      const lat = ex.n - (r + 0.5) / H * (ex.n - ex.s);
+      o.drawImage(cv, 0, (my(lat) - y0) * sy - 0.5, cv.width, 1, 0, r, W, 1);
+    }
+    L.src = out.toDataURL("image/jpeg", 0.92); L.bounds = ex;
+    return true;
+  } finally { try { map && map.remove(); } catch(e){} div.remove(); }
+}
+const osmActivate = () => liveActivate(S.bgActive && liveById(S.bgActive) ? S.bgActive : "osm");
+BG = [...LIVE];
+// OSM padrão ao vivo: fundo padrão quando a ferramenta é aberta pela plataforma (endereço https).
+// Aberta direto do computador ou na pré-visualização do Claude, o servidor do OSM recusa: fica a base de rios e rodovias.
+const OSM_OK = !osmSemEndereco() && !osmNoClaude();
+if (S.osmSeen !== 3){
+  if (OSM_OK){ S.bgActive = "osm"; S.opts.mgFill = false; S.opts.baseHidro = S.opts.baseRod = S.opts.baseUrb = false; S.opts.osmOp = S.opts.osmOp ?? 1; }
+  else if (S.bgActive === "osm"){ S.bgActive = null; S.opts.mgFill = true; S.opts.baseHidro = S.opts.baseRod = S.opts.baseUrb = true; }
+  S.osmSeen = 3;
+}
+if (TEAM_BG){
+  BG = [TEAM_BG, ...LIVE];
+  if (S.teamSeen !== (MF.versao || "1")){        // primeira vez que este fundo aparece neste navegador: já vem ligado
+    S.teamSeen = MF.versao || "1"; S.bgActive = "equipe"; S.opts.mgFill = false;
+    S.opts.baseHidro = S.opts.baseRod = S.opts.baseUrb = false;   // rios e rodovias já estão no mapa base
+  }
+}
 const fullExtent = () => ({w:+MAP.xmin.toFixed(5), e:+MAP.xmax.toFixed(5), s:+MAP.ymin.toFixed(5), n:+MAP.ymax.toFixed(5)});
 function parseWorld(text, w, h){
   const v = text.trim().split(/\s+/).map(Number);
@@ -724,12 +1406,19 @@ function renderBg(){
   $("#bgCount").textContent = S.bgActive && activeBg() ? "ativo" : "";
   const row = (id, name, thumb) => `<label class="b"><input type="radio" name="bgsel" value="${id}" ${(S.bgActive||"") === id ? "checked" : ""}>${thumb ? `<img alt="" src="${thumb}">` : ""}<span>${esc(name)}</span>${id ? `<button class="icobtn" type="button" data-bgdel="${id}" aria-label="Excluir ${esc(name)}" title="Excluir">${ICON_X}</button>` : ""}</label>`;
   list.innerHTML = row("", "Nenhum (somente limites do IBGE)") + BG.map(b => row(b.id, b.name, b.src)).join("");
+  list.querySelectorAll('[data-bgdel="equipe"]').forEach(x => x.remove());   // fundos embutidos não são excluídos aqui
+  for (const L of LIVE){ list.querySelectorAll(`[data-bgdel="${L.id}"]`).forEach(x => x.remove());
+    list.querySelectorAll(`input[value="${L.id}"]`).forEach(x => { const im = x.parentNode.querySelector("img"); if (im && !L.src) im.remove(); }); }
   const b = activeBg(); $("#bgCfg").hidden = !b;
-  if (b){ $("#bgW").value = b.bounds.w; $("#bgE").value = b.bounds.e; $("#bgS").value = b.bounds.s; $("#bgN").value = b.bounds.n; $("#bgOp").value = b.opacity ?? 1; $("#outBgOp").textContent = Math.round((b.opacity ?? 1)*100) + "%"; }
+  if ($("#bgTeam")) $("#bgTeam").hidden = !b || !!b.team || !!b.live;   // o OSM não pode virar fundo.js (política do servidor)
+  $("#bgCfg").querySelector(".bounds").hidden = !!(b && b.live); $("#bgFit").parentNode.hidden = !!(b && b.live);
+  if (b){ if (b.bounds){ $("#bgW").value = b.bounds.w; $("#bgE").value = b.bounds.e; $("#bgS").value = b.bounds.s; $("#bgN").value = b.bounds.n; }
+    $("#bgOp").value = b.opacity ?? 1; $("#outBgOp").textContent = Math.round((b.opacity ?? 1)*100) + "%"; }
 }
 $("#bgList").addEventListener("change", e => {
   if (e.target.name !== "bgsel") return;
   const had = !!activeBg(); S.bgActive = e.target.value || null;
+  if (liveById(S.bgActive)){ S.livePref = S.bgActive; liveActivate(S.bgActive); }
   if (S.bgActive && !had){ S.opts.mgFill = false; }   // ao ligar um fundo, deixa-o visível dentro de MG
   if (!S.bgActive){ S.opts.mgFill = true; }
   fillOpts(); persist(); renderBg(); drawPreview();
@@ -741,7 +1430,10 @@ $("#bgList").addEventListener("click", e => {
   renderBg(); drawPreview();
 });
 let bgSaveT = null;
-function bgChanged(){ drawPreview(); clearTimeout(bgSaveT); const b = activeBg(); bgSaveT = setTimeout(() => b && idb.put(b).catch(() => {}), 400); }
+function bgChanged(){ drawPreview(); clearTimeout(bgSaveT); const b = activeBg();
+  if (b && b.team){ S.opts.teamOp = b.opacity; persist(); return; }
+  if (b && b.live){ S.opts["op_" + b.id] = b.opacity; persist(); return; }
+  bgSaveT = setTimeout(() => b && idb.put(b).catch(() => {}), 400); }
 ["bgW","bgE","bgS","bgN"].forEach(id => $("#"+id).addEventListener("input", () => {
   const b = activeBg(); if (!b) return;
   const nb = {w:+$("#bgW").value, e:+$("#bgE").value, s:+$("#bgS").value, n:+$("#bgN").value};
@@ -777,6 +1469,29 @@ $("#bgIn").addEventListener("change", async e => {
       showMsg("ok", `Mapa de fundo “${esc(f.name)}” aplicado. ${note}`);
     } catch(err){ showMsg("err", `Não foi possível abrir “${esc(f.name)}”.`); }
   }
+});
+
+$("#bgTeam")?.addEventListener("click", async () => {
+  const b = activeBg(); if (!b || b.team) return;
+  const ok = await ask("Gerar fundo da equipe", `<p style="margin:0 0 10px">Gera o arquivo <b>fundo.js</b> com esta imagem e a posição atual. Suba-o no GitHub em <b>previsao/data/</b> (substituindo o existente) e aumente o VERSAO no Codigo.gs: o fundo passa a valer para toda a equipe.</p>
+    <label style="display:grid;gap:4px;font-weight:600;font-size:14px">Nome do fundo<input class="field" id="tfNome" value="${esc(b.name.replace(/\.[^.]+$/, ""))}"></label>
+    <label style="display:grid;gap:4px;font-weight:600;font-size:14px;margin-top:8px">Crédito no mapa (fonte e licença)<input class="field" id="tfCred" placeholder="Ex.: Relevo: Topodata/INPE (CC BY 4.0)"></label>`,
+    [["Cancelar", false, "ghost"], ["Gerar fundo.js", true, "primary"]]);
+  if (!ok) return;
+  const nome = ($("#tfNome")?.value || "").trim() || "mapa base", cred = ($("#tfCred")?.value || "").trim();
+  const img = new Image(); img.src = b.src; await img.decode();
+  const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const g = c.getContext("2d"); g.fillStyle = "#ffffff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0);
+  const src = c.toDataURL("image/jpeg", 0.85);
+  const r5 = v => +(+v).toFixed(5);
+  const dados = {versao:new Date().toISOString().slice(0,10) + "-" + Date.now().toString(36), nome, credito:cred,
+    bounds:{w:r5(b.bounds.w), e:r5(b.bounds.e), s:r5(b.bounds.s), n:r5(b.bounds.n)}, opacidade:b.opacity ?? 1, src};
+  const js = `/* Fundo da equipe da Previsão diária — ${nome}\n   ${cred || "sem crédito informado"}\n   Gerado na própria ferramenta em ${fmtDateBR(dados.versao.slice(0,10))}. */\nwindow.MAPA_FUNDO = ${JSON.stringify(dados)};\n`;
+  const blob = new Blob([js], {type:"text/javascript"});
+  const mb = (blob.size/1048576).toFixed(1).replace(".", ",");
+  let salvo = await saveFile("fundo.js", blob);
+  if (!salvo && !(window.google && window.google.script)) salvo = await saveFile("fundo.js.txt", blob);   // a pré-visualização do Claude não baixa .js
+  if (salvo) showMsg("ok", `fundo.js gerado (${mb} MB). Suba em previsao/data/ no GitHub${salvo && !(window.google && window.google.script) ? " (se o nome vier como fundo.js.txt, renomeie para fundo.js)" : ""}.`);
 });
 
 /* ================= histórico / salvar ================= */
@@ -851,12 +1566,13 @@ async function preflight(){
   if (miss.length) issues.push(`Logotipos ausentes: ${miss.join(", ")}.`);
   if (!validityText()) issues.push("Validade não informada (preencha a hora e a data).");
   const none = S.rows.filter(r => r.tempo === NONE).length;
-  if (none) issues.push(`${none} município${none>1?"s":""} com “Sem informação”.`);
+  if (none) issues.push(`${none} município${none>1?"s":""} sem condição do tempo (no mapa ${none>1?"ficam":"fica"} só o ponto e o nome).`);
   if (!issues.length) return true;
   const go = await ask("Conferir antes de exportar", `<ul style="margin:0;padding-left:18px">${issues.map(i => `<li>${esc(i)}</li>`).join("")}</ul>`, [["Voltar e completar", false, "ghost"], ["Exportar assim mesmo", true, "primary"]]);
   return !!go;
 }
-function svgToCanvas(dpi){
+async function svgToCanvas(dpi){
+  { const L = liveById(S.bgActive); if (L && !L.src && !L.failed){ try { await liveLoad(L); } catch(e){} } }
   return new Promise((res, rej) => {
     const svg = renderSVG({forExport:true});
     const W = Math.round(PAGE.w/25.4*dpi), H = Math.round(PAGE.h/25.4*dpi);
@@ -885,7 +1601,7 @@ $("#btnPng").addEventListener("click", e => busy(e.currentTarget, async () => {
   try {
     const c = await svgToCanvas(300);
     const blob = await withDpi(await new Promise(r => c.toBlob(r, "image/png")), 300);
-    if (await saveFile(`previsao_${S.date}.png`, blob)) showMsg("ok", `PNG de ${fmtDateBR(S.date)} gerado (3508 × 2631 px, 300 dpi).`);
+    if (await saveFile(`previsao_${S.date}.png`, blob)) showMsg("ok", `PNG de ${fmtDateBR(S.date)} gerado (${Math.round(PAGE.w/25.4*300)} × ${Math.round(PAGE.h/25.4*300)} px, 300 dpi).`);
   } catch(err){ showMsg("err", "O navegador não conseguiu gerar a imagem. Tente novamente ou use o SVG."); }
 }));
 $("#btnSvg").addEventListener("click", e => busy(e.currentTarget, async () => {
@@ -902,7 +1618,7 @@ $("#btnPdf").addEventListener("click", e => busy(e.currentTarget, async () => {
     const pdf = new JsPDF({orientation:"landscape", unit:"mm", format:[PAGE.w, PAGE.h], compress:true});
     pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, PAGE.w, PAGE.h, undefined, "FAST");
     pdf.setProperties({title:`Previsão de Tempo - ${fmtDateBR(S.date)}`});
-    if (await saveFile(`previsao_${S.date}.pdf`, pdf.output("blob"))) showMsg("ok", "PDF gerado no tamanho do layout (297 × 222,75 mm).");
+    if (await saveFile(`previsao_${S.date}.pdf`, pdf.output("blob"))) showMsg("ok", "PDF gerado no tamanho do layout (297 × 210 mm).");
   } catch(err){ showMsg("err", "Não foi possível gerar o PDF agora. Tente de novo ou exporte o PNG."); }
 }));
 
@@ -1375,7 +2091,7 @@ C$("#btnCidPdf").addEventListener("click", e => busy(e.currentTarget, async () =
         else { pdf.setFont("helvetica", o.b ? "bold" : "normal"); pdf.setFontSize(o.pt); pdf.setTextColor(...cHex(o.c)); pdf.text(o.t, o.x, o.y, o.r ? {align:"right"} : undefined); }
       }
     }
-    pdf.setProperties({title:`Previsão por cidade - ${cidDate()}`, author:"SIMGE/IGAM", creator:"Previsão diária MG 1.11"});
+    pdf.setProperties({title:`Previsão por cidade - ${cidDate()}`, author:"SIMGE/IGAM", creator:"Previsão diária MG 1.15"});
     baixarLocal(`previsao_cidades_${S.date}.pdf`, pdf.output("blob"));
     showCMsg("ok", `PDF de ${fmtDateBR(S.date)} baixado no seu computador (${pages.length} página${pages.length>1?"s":""}).`);
   } catch(err){ showCMsg("err", "Não foi possível gerar o PDF. Tente novamente."); }
@@ -1384,4 +2100,61 @@ C$("#btnCidPdf").addEventListener("click", e => busy(e.currentTarget, async () =
 /* ================= início ================= */
 fillTexts(); fillOpts(); applyTempsUI(); renderRows(); updateNotice(); updateStatus(); renderBg(); drawPreview();
 try { const v = sessionStorage.getItem("prevmg:view"); if (v === "bul" || v === "cid") setView(v); } catch(e){}
-idb.all().then(list => { BG = (list || []).sort((a,b) => a.id.localeCompare(b.id)); renderBg(); drawPreview(); }).catch(() => {});
+// No painel: começa pelo mapa preferido (o OSM padrão, se ninguém escolheu outro). Fora dele: base de rios e rodovias, sem aviso.
+if (S.livePref === "carto") S.livePref = "osm";      // o CARTO (precisava de chave) foi trocado pelo OpenFreeMap
+if (S.bgActive === "carto") S.bgActive = "osm";
+if (liveById(S.bgActive) && OSM_OK){ S.bgActive = liveById(S.livePref) ? S.livePref : "osm"; liveActivate(S.bgActive); }
+idb.all().then(list => { BG = [...(TEAM_BG ? [TEAM_BG] : []), ...LIVE, ...(list || []).sort((a,b) => a.id.localeCompare(b.id))]; renderBg(); drawPreview(); }).catch(() => {});
+
+/* ================= Redefinir e Desfazer =================
+   Desfazer volta qualquer alteração (municípios, condições, temperaturas, posições arrastadas, opções, textos,
+   mapa de fundo, boletim e previsão por cidade), uma de cada vez, até 100 passos. Ctrl+Z também funciona
+   fora das caixas de texto (dentro delas, o Ctrl+Z desfaz a digitação, como sempre). */
+const HIST = {stack: [], last: null, timer: null, restoring: false};
+const histSnap = () => JSON.stringify({rows:S.rows, opts:S.opts, date:S.date, val:S.val, texts:S.texts, bgActive:S.bgActive, bul:S.bul, cid:S.cid});
+function histUI(){ const b = $("#btnUndo"); if (b) b.disabled = !HIST.stack.length && HIST.last === histSnap(); }
+function histCommit(){ clearTimeout(HIST.timer); HIST.timer = null; const cur = histSnap();
+  if (HIST.last !== null && cur !== HIST.last){ HIST.stack.push(HIST.last); if (HIST.stack.length > 100) HIST.stack.shift(); }
+  HIST.last = cur; histUI(); }
+function histTouch(){ if (HIST.restoring) return; clearTimeout(HIST.timer); HIST.timer = setTimeout(histCommit, 400); const b = $("#btnUndo"); if (b) b.disabled = false; }
+function histRebase(){ HIST.last = histSnap(); histUI(); }     // trocas automáticas (ex.: mapa de reserva) não viram passo
+function histUndo(){
+  histCommit();
+  if (!HIST.stack.length) return;
+  const prev = JSON.parse(HIST.stack.pop());
+  HIST.restoring = true;
+  const bgAntes = S.bgActive;
+  Object.assign(S, prev);
+  dateEl.value = S.date || ""; fillVal(); fillTexts(); fillOpts(); applyTempsUI(); renderRows(); renderBg();
+  if (S.bgActive !== bgAntes && liveById(S.bgActive) && OSM_OK) liveActivate(S.bgActive);
+  try { fillBulletin(); } catch(e){}
+  if (!$("#viewBul").hidden) drawBulletin();
+  if (!$("#viewCid").hidden){ try { fillCid(); renderCid(); drawCid(); } catch(e){} }
+  drawPreview(); persist();
+  HIST.last = histSnap(); HIST.restoring = false; histUI();
+  showMsg("info", "Ação desfeita.");
+}
+$("#btnUndo")?.addEventListener("click", histUndo);
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z"){
+    const t = e.target, ed = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) && !/^(checkbox|radio|button|range)$/i.test(t.type || ""));
+    if (ed) return;
+    e.preventDefault(); histUndo();
+  }
+});
+$("#btnRedef")?.addEventListener("click", () => {
+  const tem = S.rows.some(r => r.tempo !== NONE || r.tmax !== "" || r.tmin !== "");
+  if (!tem){ showMsg("info", "Não há condição de tempo nem temperatura preenchida para remover."); return; }
+  histCommit();
+  S.rows.forEach(r => { r.tempo = NONE; r.tmax = ""; r.tmin = ""; });
+  renderRows(); drawPreview(); persist(); histCommit();
+  showMsg("info", `Preenchimento removido de todos os municípios (condição do tempo e temperaturas). <button class="btn small ghost" type="button" data-desfazer>Desfazer</button>`);
+});
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-desfazer],[data-abrirbg],[data-tentarbg]"); if (!t) return;
+  if (t.hasAttribute("data-desfazer")){ histUndo(); return; }
+  if (t.hasAttribute("data-abrirbg")){ const d = $("#secBg"); if (d){ d.open = true; d.scrollIntoView({behavior:"smooth", block:"start"}); } return; }
+  if (t.hasAttribute("data-tentarbg")){ hideMsg(); LIVE.forEach(L => { L.failed = false; L.promise = null; });
+    S.bgActive = liveById(S.livePref) ? S.livePref : "osm"; renderBg(); drawPreview(); liveActivate(S.bgActive); }
+});
+HIST.last = histSnap(); histUI();
