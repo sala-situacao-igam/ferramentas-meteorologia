@@ -1,5 +1,11 @@
-/* Alertas e passagem de plantão — código da página (v3.7, 20/10/2026).
-   v3.7.1: intervalo/revezamento no turno (início, fim e observações) e horários de publicação das duas
+/* Alertas e passagem de plantão — código da página (v3.9, 22/10/2026).
+   v3.9: botão Desfazer no cabeçalho do mapa (e Ctrl+Z) para a seleção de municípios; sugestões de
+   municípios enquanto digita em "Localizar município" (sem diferenciar acentos/maiúsculas).
+   v3.8: o mapa do relatório passa a ser desenhado no layout da Previsão diária (assets/layout-mapa.js):
+   297 × 210 mm, cabeçalho, legenda, rodapé com logos, as 25 cidades de referência e os mesmos mapas base;
+   na tela, mapa base por baixo dos municípios, estados vizinhos, as 25 cidades e "Centralizar Minas".
+   v3.7.1: camadas RealEarth baixadas antes em segundo plano, com até 3 tentativas e aviso por camada.
+   v3.7: intervalo/revezamento no turno (início, fim e observações) e horários de publicação das duas
    previsões diárias (cada linha: Manhã/Tarde + horário). Vão para o relatório em PDF, o rascunho e a
    planilha (colunas novas no fim da aba Plantoes, criadas pelo Codigo.gs 2026.10.20.1).
    v3.6: "Ferramentas utilizadas" com caixas de seleção (obrigatório nos dois turnos; "Outros" pede descrição);
@@ -40,7 +46,8 @@ if(!GEO){
 const MESO=window.MESORREGIOES_MG||null;   // opcional: sem ele, o mapa funciona sem os limites de mesorregião
 $('topinfo').innerHTML='<b>Minas Gerais</b> • '+GEO.features.length+' municípios';
 
-const BOUNDS={minx:-50.969359935283485,miny:-22.92052499999994,maxx:-39.85806369332265,maxy:-14.232372130922181};
+// v3.8: enquadramento um pouco maior que Minas, para mostrar os estados vizinhos e as siglas (como na Previsão)
+const BOUNDS={minx:-51.55,miny:-23.4,maxx:-39.05,maxy:-13.9};
 const state={mode:'click',selected:new Set(),active:[],dailyRows:[],plantaoId:'',meuEmail:'',pastaUrl:'',drawing:false,drawPts:[],view:{x:0,y:0,w:1000,h:760}};
 const featureByName=new Map(GEO.features.map(f=>[f.properties.nome,f]));
 const pathByName=new Map();
@@ -121,6 +128,76 @@ function render(){
     t.setAttribute('clip-path',`url(#clipMun${idx})`);t.textContent=f.properties.nome;fl.appendChild(t);
   });
   $('clipDefs').appendChild(fd);layer.appendChild(fg);labels.appendChild(fl);
+  montarCamadasNovas();
+}
+/* v3.8: mapa base por baixo dos municípios (mesmo seletor "Fundo" do mapa do relatório) e as 25 cidades
+   de referência com a marcação da Previsão (ponto branco pequeno e nome logo abaixo, tamanho fixo na tela). */
+const NS_SVG='http://www.w3.org/2000/svg';
+let fundoG=null,cidadesG=null,estadosG=null;
+const UF_TELA=[['MT',-51.18,-14.494],['GO',-49.744,-16.279],['DF',-47.797,-15.7755],['BA',-40.865,-14.794],['MS',-51.0,-20.45],['SP',-48.785,-21.709],['RJ',-42.536,-22.359],['ES',-40.361,-19.342]];
+function montarCamadasNovas(){
+  if(fundoG)return;
+  fundoG=document.createElementNS(NS_SVG,'g');fundoG.id='fundoTela';fundoG.setAttribute('pointer-events','none');
+  svg.insertBefore(fundoG,$('wxBaseLayer'));
+  cidadesG=document.createElementNS(NS_SVG,'g');cidadesG.id='cidadesRef';cidadesG.setAttribute('pointer-events','none');
+  svg.insertBefore(cidadesG,$('drawLine'));
+  estadosG=document.createElementNS(NS_SVG,'g');estadosG.id='estadosTela';estadosG.setAttribute('pointer-events','none');
+  svg.insertBefore(estadosG,$('munLayer'));
+  const fundoRet=svg.querySelector('rect');if(fundoRet)fundoRet.setAttribute('fill','#ffffff');   // fora de Minas: branco, como na Previsão
+  preencherMG();
+  // estados vizinhos (mesmo arquivo do Tempo Severo) — só desenho
+  const desenharEstados=()=>{const E=window.BRASIL_ESTADOS;if(!E||estadosG.childNodes.length)return;
+    E.features.filter(f=>(f.properties||{}).UF!=='MG').forEach(f=>{const pth=document.createElementNS(NS_SVG,'path');pth.setAttribute('d',mesoPathFor(f));
+      pth.setAttribute('fill','none');pth.setAttribute('stroke','#000');pth.setAttribute('stroke-width','0.8');pth.setAttribute('vector-effect','non-scaling-stroke');estadosG.appendChild(pth);});};
+  if(window.BRASIL_ESTADOS)desenharEstados();
+  else if(window.carregarScript)window.carregarScript((window.BASE_DADOS||'../')+'tempo-severo/data/brasil_estados.js').then(desenharEstados).catch(()=>{});
+  const css=document.createElement('style');
+  css.textContent='#cidadesRef text.uf{fill:#2f3640}#cidadesRef circle{fill:#fff;stroke:#1f2328}#cidadesRef text{fill:#092b6a;font-family:Arial,"Liberation Sans",Helvetica,sans-serif;font-weight:700;text-anchor:middle;stroke:#fff;stroke-linejoin:round;paint-order:stroke}'+
+    '#mapSvg.labels-visible #cidadesRef text{display:none}';
+  document.head.appendChild(css);
+}
+function ajustarCidadesRef(){
+  if(!cidadesG)return;
+  const k=state.view.w/Math.max(1,svg.clientWidth||1000);   // unidades do mapa por pixel da tela
+  if(!cidadesG.childNodes.length){
+    UF_TELA.forEach(([s,lon,lat])=>{const q=xy(lon,lat),g=document.createElementNS(NS_SVG,'g');g.dataset.x=q[0];g.dataset.y=q[1];g.dataset.uf='1';
+      const t=document.createElementNS(NS_SVG,'text');t.setAttribute('class','uf');t.textContent=s;g.appendChild(t);cidadesG.appendChild(g);});
+    CIDADES_REF.forEach(n=>{const f=featureByName.get(n);if(!f)return;
+      const q=xy(f.properties.label_lon,f.properties.label_lat),g=document.createElementNS(NS_SVG,'g');
+      g.dataset.x=q[0];g.dataset.y=q[1];
+      g.appendChild(document.createElementNS(NS_SVG,'circle'));const t=document.createElementNS(NS_SVG,'text');t.textContent=n;g.appendChild(t);
+      cidadesG.appendChild(g);});
+  }
+  [].forEach.call(cidadesG.childNodes,g=>{const x=+g.dataset.x,y=+g.dataset.y,c=g.firstChild,t=g.lastChild;
+    if(g.dataset.uf){t.setAttribute('x',x);t.setAttribute('y',y+5*k);t.setAttribute('font-size',13*k);t.setAttribute('stroke-width',3*k);return;}
+    c.setAttribute('cx',x);c.setAttribute('cy',y);c.setAttribute('r',1.9*k);c.setAttribute('stroke-width',0.8*k);
+    t.setAttribute('x',x);t.setAttribute('y',y+(1.9+1.5)*k+11*k*0.9);t.setAttribute('font-size',12*k);t.setAttribute('stroke-width',3*k);});
+}
+let fundoPedido=0;
+let mgD='';
+function contornoMG(){ if(!mgD)mgD=(MESO?MESO.features.map(mesoPathFor):GEO.features.map(pathFor)).join(''); return mgD; }
+function preencherMG(){   // Minas sem mapa base: o mesmo tom claro da Previsão
+  const pth=document.createElementNS(NS_SVG,'path');pth.setAttribute('d',contornoMG());pth.setAttribute('fill','#ecf4f5');pth.setAttribute('fill-rule','nonzero');fundoG.appendChild(pth);
+}
+function aplicarFundoTela(id){
+  const n=++fundoPedido;
+  if(!fundoG||!window.LayoutMapa)return;
+  while(fundoG.firstChild)fundoG.removeChild(fundoG.firstChild);
+  if(!id){preencherMG();return;}
+  window.LayoutMapa.carregarFundo(id).then(r=>{
+    if(n!==fundoPedido)return;
+    if(!r.fundo){preencherMG();return;}
+    const b=window.LayoutMapa.extensao(),p1=xy(b.w,b.n),p2=xy(b.e,b.s);
+    // recorte no contorno de Minas (mesorregiões; sem elas, os municípios)
+    let clip=$('clipMG');
+    if(!clip){clip=document.createElementNS(NS_SVG,'clipPath');clip.id='clipMG';
+      const cp=document.createElementNS(NS_SVG,'path');cp.setAttribute('d',contornoMG());clip.appendChild(cp);$('clipDefs').appendChild(clip);}
+    const im=document.createElementNS(NS_SVG,'image');
+    im.setAttribute('href',r.fundo.src);im.setAttributeNS('http://www.w3.org/1999/xlink','href',r.fundo.src);
+    im.setAttribute('x',p1[0]);im.setAttribute('y',p1[1]);im.setAttribute('width',p2[0]-p1[0]);im.setAttribute('height',p2[1]-p1[1]);
+    im.setAttribute('preserveAspectRatio','none');im.setAttribute('clip-path','url(#clipMG)');
+    fundoG.appendChild(im);
+  }).catch(()=>{});
 }
 
 /* ---------------- camadas meteorológicas (RealEarth / SSEC) ----------------
@@ -211,6 +288,7 @@ render();renderMeso();[irLayer,visLayer,glmLayer].forEach(setImagePlacement);
 function applyView(){
   const v=state.view;svg.setAttribute('viewBox',`${v.x} ${v.y} ${v.w} ${v.h}`);
   svg.classList.toggle('labels-visible',1000/v.w>=8.5);
+  try{ajustarCidadesRef();}catch(e){}   // antes do layout carregar, as cidades ainda não existem
 }
 function zoomAt(factor,cx=state.view.x+state.view.w/2,cy=state.view.y+state.view.h/2){
   const v=state.view,nw=Math.max(55,Math.min(1000,v.w*factor)),nh=nw*0.76;
@@ -277,7 +355,7 @@ window.addEventListener('mouseup',()=>{
       const a=state.drawPts[0],b=state.drawPts.at(-1);
       if(a[0]!==b[0]||a[1]!==b[1])state.drawPts.push(a);
       drawLine.setAttribute('points',state.drawPts.map(x=>x.join(',')).join(' '));
-      GEO.features.forEach(f=>{if(featureIntersectsDraw(f,state.drawPts))state.selected.add(f.properties.nome);});
+      guardarSel();GEO.features.forEach(f=>{if(featureIntersectsDraw(f,state.drawPts))state.selected.add(f.properties.nome);});
       updateSelection();
     }else drawLine.style.display='none';
     dragged=true;setMode('click');setTimeout(()=>{dragged=false;},50);
@@ -348,7 +426,7 @@ function atualizarCards(){
 }
 setInterval(()=>{pintarMapa();atualizarCards();},30000);
 
-function toggleCity(name){state.selected.has(name)?state.selected.delete(name):state.selected.add(name);updateSelection();}
+function toggleCity(name){guardarSel();state.selected.has(name)?state.selected.delete(name):state.selected.add(name);updateSelection();}
 function updateSelection(){
   pintarMapa();
   const arr=[...state.selected].sort((a,b)=>a.localeCompare(b,'pt-BR'));
@@ -356,8 +434,20 @@ function updateSelection(){
   $('selectedNames').textContent=arr.length?arr.join(', ')+'.':'Nenhum município selecionado.';
   $('create').disabled=!arr.length;
 }
-$('clear').onclick=()=>{state.selected.clear();drawLine.style.display='none';updateSelection();};
-$('novo').onclick=()=>{state.selected.clear();drawLine.style.display='none';setMode('click');updateSelection();mostrarAba('mapa');};
+$('clear').onclick=()=>{if(state.selected.size)guardarSel();state.selected.clear();drawLine.style.display='none';updateSelection();};
+$('novo').onclick=()=>{if(state.selected.size)guardarSel();state.selected.clear();drawLine.style.display='none';setMode('click');updateSelection();mostrarAba('mapa');};
+/* Desfazer: volta a seleção de municípios anterior (clique, desenho, busca, limpar) — botão no cabeçalho do mapa e Ctrl+Z */
+const HIST_SEL=[];
+function guardarSel(){HIST_SEL.push([...state.selected]);if(HIST_SEL.length>60)HIST_SEL.shift();atualizarDesfazer();}
+function desfazerSel(){if(!HIST_SEL.length)return;state.selected=new Set(HIST_SEL.pop());drawLine.style.display='none';updateSelection();atualizarDesfazer();}
+const btnDesfazerSel=document.createElement('button');
+btnDesfazerSel.type='button';btnDesfazerSel.className='btn';btnDesfazerSel.id='desfazerSel';btnDesfazerSel.disabled=true;
+btnDesfazerSel.title='Desfazer a última alteração na seleção de municípios (Ctrl+Z)';
+btnDesfazerSel.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>Desfazer';
+btnDesfazerSel.onclick=desfazerSel;
+function atualizarDesfazer(){btnDesfazerSel.disabled=!HIST_SEL.length;}
+{const cab=$('hMapa')&&$('hMapa').closest('header');if(cab){cab.appendChild(btnDesfazerSel);btnDesfazerSel.style.marginLeft='auto';}}
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&!e.shiftKey&&(e.key==='z'||e.key==='Z')){const t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;if($('modalback').style.display==='flex')return;e.preventDefault();desfazerSel();}});
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function showTip(ev,name){
@@ -498,7 +588,7 @@ $('emit').onclick=()=>{
       cities.forEach(city=>state.dailyRows.push({alertId:a.id,date,time:a.start,duration:a.duration,city}));
       $('pAlertas').value=($('pAlertas').value.trim()?$('pAlertas').value.trim()+'\n':'')+a.linha;
       if(querPc())baixarKml(cities,folder);   // cópia local, como no att_alerta (opção "Baixar também no PC")
-      state.selected.clear();drawLine.style.display='none';
+      state.selected.clear();drawLine.style.display='none';HIST_SEL.length=0;atualizarDesfazer();
       desenharAlertas();updateSelection();salvarRascunho();
       $('modalback').style.display='none';
       sincronizarAlertas();
@@ -573,13 +663,43 @@ $('undoLastAlert').onclick=()=>{
 };
 
 $('findCity').onclick=()=>{
-  const q=$('searchCity').value.trim().toLocaleLowerCase('pt-BR');if(!q)return;
-  const f=GEO.features.find(x=>x.properties.nome.toLocaleLowerCase('pt-BR').includes(q));
+  const q=semAcento($('searchCity').value.trim());if(!q)return;fecharSug();
+  const f=GEO.features.find(x=>semAcento(x.properties.nome)===q)||GEO.features.find(x=>semAcento(x.properties.nome).startsWith(q))||GEO.features.find(x=>semAcento(x.properties.nome).includes(q));
   if(!f){$('searchCity').setCustomValidity('Município não encontrado.');$('searchCity').reportValidity();setTimeout(()=>$('searchCity').setCustomValidity(''),1500);return;}
-  state.selected.add(f.properties.nome);updateSelection();
+  guardarSel();state.selected.add(f.properties.nome);updateSelection();
   const c=xy(f.properties.label_lon,f.properties.label_lat);state.view={x:Math.max(0,c[0]-120),y:Math.max(0,c[1]-91),w:240,h:182.4};clampView();applyView();
 };
-$('searchCity').addEventListener('keydown',e=>{if(e.key==='Enter')$('findCity').click();});
+/* sugestões de municípios enquanto digita (sem diferenciar acentos/maiúsculas; ↑ ↓ para escolher, Enter vai) */
+function semAcento(t){return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('pt-BR');}
+const NOMES_MUN=GEO.features.map(f=>f.properties.nome).sort((a,b)=>a.localeCompare(b,'pt-BR'));
+let sugBox=null,sugIdx=-1,sugItens=[];
+function fecharSug(){if(sugBox)sugBox.style.display='none';sugIdx=-1;sugItens=[];}
+function escolherSug(nome){$('searchCity').value=nome;fecharSug();$('findCity').click();}
+function mostrarSug(){
+  const inp=$('searchCity'),q=semAcento(inp.value.trim());
+  if(!q){fecharSug();return;}
+  const ini=[],meio=[];
+  for(const n of NOMES_MUN){const k=semAcento(n);if(k.startsWith(q))ini.push(n);else if(k.includes(q))meio.push(n);if(ini.length>=8)break;}
+  sugItens=ini.concat(meio).slice(0,8);
+  if(!sugBox){sugBox=document.createElement('div');sugBox.className='sug-mun';sugBox.setAttribute('role','listbox');
+    const wrap=inp.closest('.search')||inp.parentNode;wrap.style.position='relative';wrap.appendChild(sugBox);}
+  if(!sugItens.length){sugBox.innerHTML='<div class="sug-vazio">Nenhum município encontrado</div>';sugBox.style.display='block';sugIdx=-1;return;}
+  const marca=n=>{const k=semAcento(n),i=k.indexOf(q);return i<0?esc(n):esc(n.slice(0,i))+'<b>'+esc(n.slice(i,i+q.length))+'</b>'+esc(n.slice(i+q.length));};
+  sugBox.innerHTML=sugItens.map((n,i)=>`<div class="sug-it${i===sugIdx?' on':''}" role="option" data-i="${i}">${marca(n)}</div>`).join('');
+  sugBox.querySelectorAll('.sug-it').forEach(el=>el.onmousedown=e=>{e.preventDefault();escolherSug(sugItens[+el.dataset.i]);});
+  sugBox.style.display='block';
+}
+$('searchCity').addEventListener('input',()=>{sugIdx=-1;mostrarSug();});
+$('searchCity').addEventListener('blur',()=>setTimeout(fecharSug,120));
+$('searchCity').addEventListener('keydown',e=>{
+  const aberto=sugBox&&sugBox.style.display==='block'&&sugItens.length;
+  if(e.key==='ArrowDown'&&aberto){e.preventDefault();sugIdx=(sugIdx+1)%sugItens.length;mostrarSug();}
+  else if(e.key==='ArrowUp'&&aberto){e.preventDefault();sugIdx=(sugIdx-1+sugItens.length)%sugItens.length;mostrarSug();}
+  else if(e.key==='Escape'){fecharSug();}
+  else if(e.key==='Enter'){e.preventDefault();if(aberto&&sugIdx>=0)escolherSug(sugItens[sugIdx]);else if(aberto&&sugItens.length===1)escolherSug(sugItens[0]);else $('findCity').click();}
+});
+{const st=document.createElement('style');st.textContent='.sug-mun{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:2000;background:var(--card,#16243a);border:1px solid var(--line,#2b3d57);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35);max-height:280px;overflow:auto;padding:4px}'+
+  '.sug-it{padding:7px 10px;border-radius:6px;cursor:pointer;font-size:14px}.sug-it b{color:#4fb3ff}.sug-it:hover,.sug-it.on{background:rgba(79,179,255,.16)}.sug-vazio{padding:7px 10px;font-size:13px;opacity:.7}';document.head.appendChild(st);}
 
 /* ---------------- transparências ---------------- */
 function aplicarLimites(){const v=Number($('boundaryOpacity').value)/100;pathByName.forEach(p=>p.style.strokeOpacity=v);}
@@ -878,8 +998,9 @@ function layoutRelatorio(d){
     }
   });
   // mapa dos alertas
-  const mh=Wt*760/1000;
-  if(d.mapa){y+=3;if(y+mh>fundo)nova();pg.push({k:'img',src:d.mapa,fmt:'PNG',x:A4.m,y,w:Wt,h:mh});y+=mh;}
+  // v3.8: mapa no layout da Previsão diária (297 × 210 mm); se o layout não carregar, vale a foto antiga da tela (1000 × 760)
+  const mh=Wt*(d.mapaProp||760/1000);
+  if(d.mapa){y+=3;if(y+mh>fundo)nova();pg.push({k:'img',src:d.mapa,fmt:d.mapaFmt||'PNG',x:A4.m,y,w:Wt,h:mh});y+=mh;}
   else texto(d.mapaPendente?'Gerando a imagem do mapa…':'Mapa não disponível (não foi possível capturar a imagem do mapa).',10,false,3);
   // Mapa de Previsões
   if(d.prev&&d.prev.url&&d.prev.w&&d.prev.h){
@@ -978,16 +1099,77 @@ function fotografarMapa(nomes){
   });
 }
 function municipiosAlertados(){const s=new Set();state.active.forEach(a=>(a.cities||[]).forEach(n=>s.add(n)));return s;}
-let mapaCache={chave:null,url:''};
+/* ---- v3.8: mapa dos alertas no MESMO layout da Previsão diária (assets/layout-mapa.js) ----
+   Cabeçalho, legenda, rodapé com logos, 297 × 210 mm, pontos e nomes das 25 cidades de referência e
+   os mesmos mapas base (seletor "Fundo" ao lado de "Baixar PDF no PC"). */
+const CIDADES_REF=['Almenara','Barbacena','Belo Horizonte','Buritis','Campos Altos','Carneirinho','Curvelo','Diamantina','Divinópolis',
+  'Extrema','Governador Valadares','Ipatinga','Itamonte','Januária','Juiz de Fora','Manhuaçu','Montes Claros','Paracatu','Patos de Minas',
+  'Pirapora','Poços de Caldas','Teófilo Otoni','Uberaba','Uberlândia','Viçosa'];
+let layoutPromessa=null;
+function garantirLayout(){
+  if(window.LayoutMapa)return Promise.resolve();
+  if(layoutPromessa)return layoutPromessa;
+  const base=window.BASE_DADOS||'../',v=window.VERSAO_APP?'?v='+encodeURIComponent(window.VERSAO_APP):'';
+  const carregar=window.carregarScript||(src=>new Promise((ok,erro)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>erro(new Error('Falhou ao carregar '+src));document.head.appendChild(s);}));
+  const temGeo=!!document.querySelector('script[src*="previsao/data/geo.js"]');
+  layoutPromessa=(temGeo?Promise.resolve():carregar(base+'previsao/data/geo.js'+v))
+    .then(()=>carregar(base+'assets/layout-mapa.js'+v))
+    .then(()=>{if(!window.LayoutMapa)throw new Error('layout do mapa indisponível');})
+    .catch(e=>{layoutPromessa=null;throw e;});
+  return layoutPromessa;
+}
+function opcoesMapaAlertas(nomes){
+  const c=dadosRelatorio().campos,data=c.data||'',turno=(state.turno&&state.turno.turno)||'';
+  const dataTxt=data?dataBR(data):'data pendente';
+  return {
+    titulo:'Alertas - '+dataTxt+(turno?' ('+turno+')':''),
+    textoValidade:'Alertas emitidos no plantão'+(turno?' '+turno.toLowerCase():'')+(data?' de '+dataTxt:''),
+    credito:'Alertas - SIMGE/IGAM, '+((data||new Date().toISOString()).slice(0,4)),
+    areas:[...nomes].map(n=>featureByName.get(n)).filter(Boolean).map(f=>({geometry:f.geometry,fill:'#f1c34d',opacity:0.75,stroke:'#9b6800',strokeWidth:0.12})),
+    legenda:[{fill:'#f5d47f',label:'Município com alerta no plantão'},{fill:'#ffffff',label:'Sem alerta'}],
+    cidadesNomes:CIDADES_REF
+  };
+}
+async function mapaLayout(nomes){
+  await garantirLayout();
+  const c=await window.LayoutMapa.canvas(opcoesMapaAlertas(nomes),200);   // 2339 × 1654 px, JPEG para o PDF não pesar
+  return c.toDataURL('image/jpeg',0.9);
+}
+let mapaCache={chave:null,url:'',fmt:'PNG',prop:760/1000};
 async function mapaDoRelatorio(nomes,forcar){
-  const chave=[...nomes].sort().join('|');
+  const c=dadosRelatorio().campos,fundo=window.LayoutMapa?window.LayoutMapa.fundoEscolhido():'';
+  const chave=[...nomes].sort().join('|')+'#'+(c.data||'')+'#'+((state.turno&&state.turno.turno)||'')+'#'+fundo;
   if(mapaCache.chave===chave&&(mapaCache.url||!forcar))return mapaCache.url;
-  let url='';
-  try{url=await Promise.race([fotografarMapa(nomes),new Promise(ok=>setTimeout(()=>ok(''),20000))]);}catch(e){url='';}
-  mapaCache={chave,url};           // guarda também a falha, para a prévia não tentar sem parar
+  let url='',fmt='JPEG',prop=210/297;
+  try{url=await Promise.race([mapaLayout(nomes),new Promise(ok=>setTimeout(()=>ok(''),60000))]);}catch(e){url='';}
+  if(!url){   // sem o layout: a foto da tela, como antes
+    fmt='PNG';prop=760/1000;
+    try{url=await Promise.race([fotografarMapa(nomes),new Promise(ok=>setTimeout(()=>ok(''),20000))]);}catch(e){url='';}
+  }
+  mapaCache={chave,url,fmt,prop};           // guarda também a falha, para a prévia não tentar sem parar
   return url;
 }
+// carrega o layout logo e põe o seletor "Fundo" ao lado de "Baixar PDF no PC"
+garantirLayout().then(()=>{
+  if(window.LayoutMapa.montarSeletor)window.LayoutMapa.montarSeletor($('hMapa'));
+  // botão "Centralizar Minas" bem à vista, no cabeçalho do mapa (faz o mesmo que o "MG" do canto)
+  if(!$('centralizarMG')){const b=document.createElement('button');b.type='button';b.className='btn';b.id='centralizarMG';
+    b.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>Centralizar Minas';
+    b.onclick=()=>$('zoomReset').click();const lab=$('layoutFundo')&&$('layoutFundo').closest('label');
+    const cab=$('hMapa').closest('header');if(lab)cab.insertBefore(b,lab);else cab.appendChild(b);b.style.marginLeft=lab?'auto':'';if(lab)lab.style.marginLeft='0';
+    cab.insertBefore(btnDesfazerSel,b);btnDesfazerSel.style.marginLeft='auto';b.style.marginLeft='0';}
+  $('zoomReset').title='Centralizar Minas Gerais';
+  // o seletor vale para a tela e para o mapa do relatório: fica visível nas duas abas
+  document.addEventListener('layoutfundo',e=>aplicarFundoTela(e.detail||''));
+  aplicarFundoTela(window.LayoutMapa.fundoEscolhido());ajustarCidadesRef();
+  document.addEventListener('layoutfundo',()=>{mapaCache.chave=null;agendarRelatorio(true);});
+  mapaCache.chave=null;agendarRelatorio(true);
+}).catch(()=>{});
 
+function chaveMapaAtual(nomes){
+  const c=dadosRelatorio().campos,fundo=window.LayoutMapa?window.LayoutMapa.fundoEscolhido():'';
+  return [...nomes].sort().join('|')+'#'+(c.data||'')+'#'+((state.turno&&state.turno.turno)||'')+'#'+fundo;
+}
 /* ---- prévia ao vivo ---- */
 let relT=0;
 function agendarRelatorio(comMapa){
@@ -998,7 +1180,7 @@ function agendarRelatorio(comMapa){
 async function desenharRelatorio(){
   const d=dadosRelatorio();
   const nomes=municipiosAlertados(),chave=[...nomes].sort().join('|');
-  if(mapaCache.chave===chave)d.mapa=mapaCache.url;
+  if(mapaCache.chave&&mapaCache.chave.split('#')[0]===chave&&mapaCache.chave===chaveMapaAtual(nomes)){d.mapa=mapaCache.url;d.mapaFmt=mapaCache.fmt;d.mapaProp=mapaCache.prop;}
   else{d.mapaPendente=true;mapaDoRelatorio(nomes).then(()=>agendarRelatorio());}
   const pages=layoutRelatorio(d);
   $('relPages').innerHTML=pages.map((p,i)=>`<div class="a4" aria-label="Página ${i+1}">${paginaSvg(p)}</div>${pages.length>1?`<div class="pgnum">Página ${i+1} de ${pages.length}</div>`:''}`).join('');
@@ -1010,7 +1192,7 @@ function relMsg(tipo,html){const m=$('relMsg');m.className='msg '+tipo;m.innerHT
 $('baixarRel').onclick=async()=>{
   const btn=$('baixarRel');btn.classList.add('busy');
   try{
-    const d=dadosRelatorio();d.mapa=await mapaDoRelatorio(municipiosAlertados(),true);
+    const d=dadosRelatorio();d.mapa=await mapaDoRelatorio(municipiosAlertados(),true);d.mapaFmt=mapaCache.fmt;d.mapaProp=mapaCache.prop;
     await Promise.race([window.alertasJsPdf,new Promise(ok=>setTimeout(ok,15000))]).catch(()=>{});
     const r=gerarPdf(d);
     baixarLocal(carimbo(d.geradoEm)+'_relatorio_plantao_'+(d.id||'previa')+'.pdf',r.blob);
@@ -1031,7 +1213,7 @@ async function relatorioFinal(snap,nomesLocais){
     await new Promise(ok=>google.script.run.withSuccessHandler(p=>{if(p&&/^https:\/\//.test(p.url))snap.pastaUrl=p.url;ok();})
       .withFailureHandler(()=>ok()).prepararPastaTurno(snap.turno.data,snap.turno.turno));
   }
-  snap.mapa=await mapaDoRelatorio(nomes,true);
+  snap.mapa=await mapaDoRelatorio(nomes,true);snap.mapaFmt=mapaCache.fmt;snap.mapaProp=mapaCache.prop;
   await Promise.race([window.alertasJsPdf,new Promise(ok=>setTimeout(ok,15000))]).catch(()=>{});
   let r;
   try{r=gerarPdf(snap);}catch(e){aviso('A passagem foi salva, mas o PDF não pôde ser gerado: '+esc(e&&e.message||e),true);lembrarEmailPlantao(snap.id);return;}
@@ -1190,6 +1372,8 @@ $('salvarPlantao').onclick=()=>{
 };
 
 function carregarContexto(){
+  // fora do Apps Script (página de teste no GitHub): sem conta, sem Drive e sem planilha — o resto funciona
+  if(!temServidor){$('quem').textContent='Modo de teste (sem Drive)';return;}
   google.script.run
     .withSuccessHandler(ctx=>{
       $('quem').dataset.email=ctx.email||'';
