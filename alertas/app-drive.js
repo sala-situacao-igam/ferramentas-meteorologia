@@ -1185,7 +1185,6 @@ function layoutRelatorio(d){
 
   // ---------- 4. Alertas ----------
   secao(4,'Monitoramento e emissão de alertas');
-  diretriz(REL_DIRETRIZ_4);
   const rot=t=>({t,b:true,c:REL_AZUL});
   par([rot('Sistemas utilizados no plantão:'),{t:c.ferramentas||'—'}],{depois:1.4});
   par([rot('Alertas de tempo severo emitidos no turno:'),{t:String(d.nAlertas||0)}],{depois:1.4});
@@ -1211,8 +1210,7 @@ function layoutRelatorio(d){
     if(it.descricao.trim())blocos.push([{t:'Descrição:',b:true},{t:it.descricao.trim()}]);
     if(it.acao.trim())blocos.push([{t:'Ação tomada:',b:true},{t:it.acao.trim()}]);
     const links=String(it.evidencia||'').split(/\s*;\s*/).filter(u=>/^https?:\/\//i.test(u));
-    if(links.length)blocos.push([{t:'Evidência:',b:true}].concat(links.map((u,i)=>({t:'link'+(links.length>1?' '+(i+1):''),link:u,u:true}))));
-    else if(it.arquivo)blocos.push([{t:'Evidência:',b:true},{t:'imagem '+it.arquivo+' (vai para a pasta de intercorrências ao salvar)'}]);
+    if(!it.img&&links.length)blocos.push([{t:'Evidência:',b:true}].concat(links.map((u,i)=>({t:'link'+(links.length>1?' '+(i+1):''),link:u,u:true}))));
     const h=blocos.reduce((a,s)=>a+altPar(s,{w:wi}),0)+1.5;
     cabe(Math.min(h,60));
     let y0=y;const pg0=pg;
