@@ -1,5 +1,5 @@
 /*
- * Reservatórios e Tendência v0.12 — código da ferramenta (SIMGE/IGAM)
+ * Reservatórios e Tendência v0.13 — código da ferramenta (SIMGE/IGAM)
  * Usado por reservatorios/index.html (GitHub Pages) e pela casca Reservatorios.html do Apps Script (?f=reservatorios).
  * Os downloads (PNG e CSV) usam link + .click(); no Apps Script, a ponte-drive.js intercepta e salva no Drive.
  */
@@ -143,6 +143,8 @@ async function downloadCanvas(elId, filename){
 function downloadCsvRows(rows, filename){ const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(';')).join('\r\n'); const blob=new Blob(["﻿"+csv],{type:'text/csv;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
 function tabInit(){ document.querySelectorAll('.tab').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active')); btn.classList.add('active'); document.getElementById(btn.dataset.tab).classList.add('active'); })); }
 
+// nome de arquivo: Prefixo_00Z_inicio_fim.ext (ciclo da aba + período)
+function nomeArq(prefixo, cicloId, iniId, fimId, ext){ const v=id=>(document.getElementById(id)?.value||'sem_data'); return `${prefixo}_${cycleTag(cicloId).toUpperCase()}_${v(iniId)}_${v(fimId)}.${ext}`; }
 function cycleTag(selId){ return (document.getElementById(selId)?.value || '00Z').toLowerCase(); }
 
 const APP={reserv:{source:null,proc:null,rows:[]}, weekly:{w1:null,w2:null,p1:null,p2:null,proc1:null,proc2:null}, accum:{a24:null,a72:null,a120:null,p24:null,p72:null,p120:null}};
@@ -180,20 +182,20 @@ async function generateWeekly(){ if(!APP.weekly.w1 || !APP.weekly.w2){ setStatus
 async function generateAccum(){ const cfgs=[['a24','24 h'],['a72','3 dias'],['a120','5 dias']]; let any=false; for(const [field,label] of cfgs){ const src=APP.accum[field]; if(!src) continue; any=true; const proc=buildClassGrid(src); APP.accum['p'+field.slice(1)] = proc; const ds=fmtDate(document.getElementById(field+'Start').value), de=fmtDate(document.getElementById(field+'End').value); await renderProcessedMap(document.getElementById(field+'Canvas'), proc, {titulo:`Total Previsto de Precipitação em ${label}`+((ds&&de)?' - '+periodoMapa(field+'Start',field+'End'):''), subtitulo:`Modelo GFS · ciclo ${document.getElementById('accCycle').value}`, ano:anoDe(field+'Start'), showCities:true, showReservoirs:false, collectReservoirRows:false}); document.getElementById(field+'Png').disabled=false; } if(!any){ setStatus('accStatus','Carregue pelo menos uma imagem do CPC (24h, 3 dias ou 5 dias).'); return; } setStatus('accStatus','<strong>Mapas gerados.</strong> Esta base já fica pronta para o geoprocessamento ajustar depois os detalhes finais dos produtos diários.'); }
 ['resFile'].forEach(id=>document.getElementById(id).addEventListener('change',()=>handleFileInput(id,'reserv','source','resPreview','resStatus')));
 document.getElementById('resGenerate').addEventListener('click',generateReserv);
-document.getElementById('resPng').addEventListener('click',()=>downloadCanvas('resCanvas',`Reservatorios_CPC_${document.getElementById('resStart').value||'sem_data'}_${document.getElementById('resEnd').value||'sem_data'}.png`));
-document.getElementById('resCsv').addEventListener('click',()=>downloadCsvRows([['Reservatórios','Abreviação','Precipitação (mm)'],...APP.reserv.rows],'Tabela_Reservatorios_CPC.csv'));
+document.getElementById('resPng').addEventListener('click',()=>downloadCanvas('resCanvas',nomeArq('Reservatorios_CPC','resCycle','resStart','resEnd','png')));
+document.getElementById('resCsv').addEventListener('click',()=>downloadCsvRows([['Reservatórios','Abreviação','Precipitação (mm)'],...APP.reserv.rows],nomeArq('Tabela_Reservatorios_CPC','resCycle','resStart','resEnd','csv')));
 document.getElementById('resStart').addEventListener('change',()=>document.getElementById('resPeriodKpi').textContent=`${fmtDate(document.getElementById('resStart').value)} a ${fmtDate(document.getElementById('resEnd').value)}`);
 document.getElementById('resEnd').addEventListener('change',()=>document.getElementById('resPeriodKpi').textContent=`${fmtDate(document.getElementById('resStart').value)} a ${fmtDate(document.getElementById('resEnd').value)}`);
 document.getElementById('resCycle').addEventListener('change',()=>{ document.getElementById('resInputKpi').textContent=`GFS Week 1 · ${document.getElementById('resCycle').value}`; });
 ['wk1File','wk2File','prob1File','prob2File'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{ const map={wk1File:['weekly','w1','wk1Preview'],wk2File:['weekly','w2','wk2Preview'],prob1File:['weekly','p1','prob1Preview'],prob2File:['weekly','p2','prob2Preview']}[id]; handleFileInput(id,map[0],map[1],map[2],'wkStatus'); }));
 document.getElementById('wkGenerate').addEventListener('click',generateWeekly);
-document.getElementById('wk1Png').addEventListener('click',()=>downloadCanvas('wk1Canvas',`Tendencia_Week1_${document.getElementById('wk1Start').value}_${document.getElementById('wk1End').value}.png`));
-document.getElementById('wk2Png').addEventListener('click',()=>downloadCanvas('wk2Canvas',`Tendencia_Week2_${document.getElementById('wk2Start').value}_${document.getElementById('wk2End').value}.png`));
+document.getElementById('wk1Png').addEventListener('click',()=>downloadCanvas('wk1Canvas',nomeArq('Tendencia_Week1','wkCycle','wk1Start','wk1End','png')));
+document.getElementById('wk2Png').addEventListener('click',()=>downloadCanvas('wk2Canvas',nomeArq('Tendencia_Week2','wkCycle','wk2Start','wk2End','png')));
 ['a24File','a72File','a120File'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{ const map={a24File:['accum','a24','a24Preview'],a72File:['accum','a72','a72Preview'],a120File:['accum','a120','a120Preview']}[id]; handleFileInput(id,map[0],map[1],map[2],'accStatus'); }));
 document.getElementById('accGenerate').addEventListener('click',generateAccum);
-document.getElementById('a24Png').addEventListener('click',()=>downloadCanvas('a24Canvas','CPC_24h.png'));
-document.getElementById('a72Png').addEventListener('click',()=>downloadCanvas('a72Canvas','CPC_3dias.png'));
-document.getElementById('a120Png').addEventListener('click',()=>downloadCanvas('a120Canvas','CPC_5dias.png'));
+document.getElementById('a24Png').addEventListener('click',()=>downloadCanvas('a24Canvas',nomeArq('CPC_24h','accCycle','a24Start','a24End','png')));
+document.getElementById('a72Png').addEventListener('click',()=>downloadCanvas('a72Canvas',nomeArq('CPC_3dias','accCycle','a72Start','a72End','png')));
+document.getElementById('a120Png').addEventListener('click',()=>downloadCanvas('a120Canvas',nomeArq('CPC_5dias','accCycle','a120Start','a120End','png')));
 
 const CPC_DIR=(window.BASE_DADOS||'../')+'reservatorios/cpc/';  // funciona no GitHub Pages (BASE '../') e no Apps Script (BASE absoluta)
 const CPC_ITENS=[['week1','reserv','source','resPreview'],['week1','weekly','w1','wk1Preview'],['week2','weekly','w2','wk2Preview'],['prob100_week1','weekly','p1','prob1Preview'],['prob100_week2','weekly','p2','prob2Preview'],['24h','accum','a24','a24Preview'],['day3','accum','a72','a72Preview'],['day5','accum','a120','a120Preview']];
