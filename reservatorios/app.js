@@ -1,5 +1,5 @@
 /*
- * Reservatórios e Tendência v0.13 — código da ferramenta (SIMGE/IGAM)
+ * Reservatórios e Tendência v0.14 — código da ferramenta (SIMGE/IGAM)
  * Usado por reservatorios/index.html (GitHub Pages) e pela casca Reservatorios.html do Apps Script (?f=reservatorios).
  * Os downloads (PNG e CSV) usam link + .click(); no Apps Script, a ponte-drive.js intercepta e salva no Drive.
  */
@@ -248,6 +248,28 @@ async function loadCpc(){
   }finally{ btn.disabled=false; }
 }
 document.getElementById('cpcLoad').addEventListener('click',loadCpc);
+// Versão do CPC disponível: ao abrir a página, lê os manifestos dos dois ciclos e mostra
+// quando cada um foi atualizado no CPC e quando o GitHub baixou; pré-seleciona o ciclo mais recente.
+async function versaoCpc(){
+  const el=document.getElementById('cpcVersao'); if(!el) return;
+  const info=[];
+  for(const c of ['00','06']){
+    try{
+      const r=await fetch(`${CPC_DIR}${c}/manifest.json?t=${Date.now()}`,{cache:'no-store'}); if(!r.ok) throw 0;
+      const prods=Object.values((await r.json()).produtos||{}).filter(it=>it&&it.arquivo);
+      const max=k=>prods.map(it=>it[k]).filter(Boolean).sort().pop()||'';
+      info.push({c, cpc:max('atualizado_no_cpc'), baixado:max('baixado_em'), n:prods.length});
+    }catch(e){ info.push({c, cpc:'', baixado:'', n:0}); }
+  }
+  const recente=info.filter(i=>i.cpc).sort((a,b)=>a.cpc<b.cpc?1:-1)[0];
+  if(recente) document.getElementById('cpcCycle').value=recente.c;
+  el.innerHTML='<strong>Versão do CPC disponível</strong>'+info.map(i=>{
+    if(!i.cpc) return `<div>${i.c}Z: <span class="warn">ainda não baixado</span></div>`;
+    const velha=(Date.now()-new Date(i.cpc).getTime())>36*3600*1000;
+    return `<div>${i.c}Z${recente&&recente.c===i.c?' <b>(mais recente)</b>':''}: rodada atualizada no CPC em ${fmtDataHora(i.cpc)} · baixada em ${fmtDataHora(i.baixado)} · ${i.n}/7 imagens${velha?' <span class="warn">· mais de 36 h</span>':''}</div>`;
+  }).join('')+'<div style="color:var(--muted)">A busca automática roda a cada 2 h (minuto 17 das horas ímpares, horário de Brasília).</div>';
+}
+versaoCpc();
 
 tabInit();
 document.getElementById('resPeriodKpi').textContent=`${fmtDate(document.getElementById('resStart').value)} a ${fmtDate(document.getElementById('resEnd').value)}`;
