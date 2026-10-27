@@ -15,7 +15,10 @@
  *   LayoutMapa.previa(op)     -> abre a prévia na tela (idem)
  *   op = { titulo, validade:{date:'AAAA-MM-DD', time:'HH:MM'}, credito,
  *          areas:[{geometry, fill, stroke}], legenda:[{fill, label}],
- *          cidades:[{nome, lon, lat}], municipios:false, fundo:'osm'|'osmfr'|'osmde'|'ofm'|'' }
+ *          cidades:[{nome, lon, lat}], municipios:false, fundo:'osm'|'osmfr'|'osmde'|'ofm'|'',
+ *          (cada cidade pode ter posicao:'acima'|'direita'; sem ela, o nome fica abaixo, como na Previsão)
+ *          pontos:[{lon, lat, rotulo, cor, lado:'esquerda'|'acima'}] (opcional: ponto com rótulo ao lado, ex.: reservatórios),
+ *          textoValidade:'texto livre no lugar da validade' (opcional) }
  *   Sem op.fundo, vale a escolha do seletor "Mapa de fundo" que este arquivo coloca ao lado do botão
  *   "Prévia do mapa" (lembrada neste navegador).
  */
@@ -50,7 +53,7 @@
   var PT_R = 0.65, NOME_TAM = 3.5;                  // ponto da sede com metade do tamanho anterior (igual à Previsão)
   var COL = 258.49, LIN_W = 51.28;                   // eixo e largura das linhas da coluna da legenda (iguais à Previsão 1.15)
   var MG_FILL = '#ecf4f5';                           // Minas sem mapa base: o mesmo tom claro da Previsão                    // marcação das cidades: a mesma da Previsão
-  var STATE_LABELS = [['MT', -51.18, -14.494], ['GO', -49.744, -16.279], ['DF', -47.797, -15.7755], ['BA', -40.865, -14.794], ['MS', -51.0, -20.45],
+  var STATE_LABELS = [['MT', -51.18, -14.494], ['GO', -49.744, -16.279], ['DF', -47.797, -15.7755], ['BA', -40.865, -14.794], ['MS', -51.2, -20.1],
     ['SP', -48.785, -21.709], ['RJ', -42.536, -22.359], ['ES', -40.361, -19.342]];
   var NORTH_ARROW = '<g transform="translate(-1.438 30.744)"><path d="m32-9.453l28.938 73.826-29-29-29 29z" fill="#000" stroke="#fff" stroke-width="3"/><path d="m32-9.453l29 73.45-29-29-29 29z" fill="none" stroke="#fff" stroke-linecap="square"/><text fill="#000" font-family="' + FONT + '" font-size="26" x="22.71" y="-10.854">N</text></g><g fill="none" stroke="#fff" stroke-width=".25" transform="translate(0 -3.829)"><path d="m4 92.82l6.74-3.891M4.603 90.7l10.397-6M3 95.17l4-2.309M5.442 88.45l13.856-8M12 72.26l18.686-10.812M14.593 65.45l16.09-9.291M15.343 63.24l15.343-8.858M16.877 60.58l13.809-7.972M17.511 58.45l13.174-7.606M18.412 56.15l12.274-7.087M19 54.04l11.427-6.597M20 51.757l10.822-6.311M20.826 49.45l9.86-5.693M21.48 47.3l9.206-5.315M23 44.647l7.686-4.437M23.744 42.45l6.928-4M24.549 40.21l6.137-3.543M25 38.18l5.686-3.283M26.663 35.446l4.02-2.323M27.617 33.12l3.069-1.772M28 31.13l2.686-1.551M29.15 28.694l1.534-.886M13 69.909l17.686-10.211M9.206 79.19l21.48-12.402M8.36 81.45l22.326-12.89M7.671 83.62l19.946-11.516M6.137 86.27l17.02-9.827M10 76.956l20.686-11.943M11.279 74.45l19.407-11.205M14 67.56l16.686-9.634"/><path d="m30.562 69.573v-43.566"/></g>';
   var ASC = .905, DESC = .212, LH = 1.117;
@@ -355,9 +358,23 @@
       if (!isFinite(c.lon) || !isFinite(c.lat)) return;
       var p = proj(c.lon, c.lat), x = p[0] - MAP.x, y = p[1] - MAP.y;
       pts.push('<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="' + PT_R + '" fill="#ffffff" stroke="#1f2328" stroke-width="0.25"/>');
-      nomes.push('<text x="' + f2(x) + '" y="' + f2(y + PT_R + 0.35 + ASC * ns) + '" font-family="' + FONT + '" font-size="' + f2(ns) + '" font-weight="700" fill="' + navy + '" text-anchor="middle" stroke="#fff" stroke-width="' + f2(ns * 0.3) + '" stroke-linejoin="round" paint-order="stroke">' + esc(c.nome) + '</text>');
+      // posição do nome: abaixo (padrão, como na Previsão), 'acima' ou 'direita' (para desviar de outros rótulos)
+      var tx = x, ty = y + PT_R + 0.35 + ASC * ns, ta = 'middle';
+      if (c.posicao === 'acima') ty = y - PT_R - 0.35 - DESC * ns;
+      else if (c.posicao === 'direita') { tx = x + PT_R + 0.8; ty = y + (ASC - DESC) / 2 * ns; ta = 'start'; }
+      nomes.push('<text x="' + f2(tx) + '" y="' + f2(ty) + '" font-family="' + FONT + '" font-size="' + f2(ns) + '" font-weight="700" fill="' + navy + '" text-anchor="' + ta + '" stroke="#fff" stroke-width="' + f2(ns * 0.3) + '" stroke-linejoin="round" paint-order="stroke">' + esc(c.nome) + '</text>');
     });
     o.push(pts.join(''), nomes.join(''));
+    // pontos com rótulo ao lado (opcional; usado pelos reservatórios): op.pontos = [{lon, lat, rotulo, cor}]
+    (op.pontos || []).forEach(function (pt) {
+      if (!isFinite(pt.lon) || !isFinite(pt.lat)) return;
+      var p = proj(pt.lon, pt.lat), x = p[0] - MAP.x, y = p[1] - MAP.y, rs = 3.2;
+      o.push('<circle cx="' + f2(x) + '" cy="' + f2(y) + '" r="0.85" fill="' + (pt.cor || '#e60000') + '" stroke="#fff" stroke-width="0.25"/>');
+      var lx = x + 1.3, ly = y + (ASC - DESC) / 2 * rs, la = 'start';
+      if (pt.lado === 'esquerda') { lx = x - 1.3; la = 'end'; }
+      else if (pt.lado === 'acima') { lx = x; ly = y - 1.2 - DESC * rs; la = 'middle'; }
+      if (pt.rotulo) o.push('<text x="' + f2(lx) + '" y="' + f2(ly) + '" font-family="' + FONT + '" font-size="' + rs + '" font-weight="700" fill="#000" text-anchor="' + la + '" stroke="#fff" stroke-width="' + f2(rs * 0.3) + '" stroke-linejoin="round" paint-order="stroke">' + esc(pt.rotulo) + '</text>');
+    });
     o.push('</g>');
     o.push('<rect width="' + MAP.w + '" height="' + MAP.h + '" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>');
     o.push('</g>');
