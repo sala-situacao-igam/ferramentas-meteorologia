@@ -38,6 +38,9 @@
    o Apps Script altera código JavaScript longo escrito dentro do HTML e quebrava a página.
    Depende de: window.BASE_DADOS, window.VERSAO_APP, window.alertasDados e window.alertasJsPdf
    (definidos no Alertas.html), municipios.js e mesorregioes.js. */
+/* 2026.10.28: salvamento padrão (assets/ponte-drive.js): um clique salva no PC e no Drive; resultado em verde, laranja ou vermelho */
+if(!window.FERRAMENTA)window.FERRAMENTA='alertas';
+(function(){if(window.SalvarMaterial)return;var s=document.createElement('script');s.src=(window.BASE_DADOS||'../')+'assets/ponte-drive.js?v='+(window.VERSAO_APP||'sm18');document.head.appendChild(s);})();
 window.alertasDados.then(iniciarAlertas,function(e){
   document.getElementById('topinfo').innerHTML='<b>Não foi possível carregar os municípios.</b> Verifique se alertas/data/municipios.js está publicado no GitHub Pages e recarregue (Ctrl+F5).';
   window.diagFaixa(e.message);
@@ -69,6 +72,10 @@ const CHAVE_PC='ferramentas-meteorologia:baixar-no-pc';
 function querPc(){try{const v=localStorage.getItem(CHAVE_PC+':alertas');return v===null?true:v==='1';}catch(e){return true;}}   // padrão nos Alertas: ligado (cópia local do KML, como antes)
 $('baixarPc').checked=querPc();
 $('baixarPc').onchange=()=>{try{localStorage.setItem(CHAVE_PC+':alertas',$('baixarPc').checked?'1':'0');}catch(e){}};
+function salvarMaterial(nome,blob,opc){   // salva no PC e no Drive (assets/ponte-drive.js); sem a ponte, baixa no PC como antes
+  if(window.SalvarMaterial)return window.SalvarMaterial.abrir(Object.assign({nome,blob},opc||{}));
+  baixarLocal(nome,blob);
+}
 function baixarLocal(nome,blob){
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download=nome;a.setAttribute('data-local','1');document.body.appendChild(a);a.click();a.remove();
@@ -522,16 +529,17 @@ function montarKml(cities,folder){
   const PI='<'+String.fromCharCode(63);   // escrito assim de propósito: o Apps Script lê menor-que + interrogação como código de modelo
   return `${PI}xml version="1.0" encoding="utf-8" ${String.fromCharCode(63)}><kml xmlns="http://www.opengis.net/kml/2.2"><Document><Folder><name>${folder}</name>${placemarks}</Folder></Document></kml>`;
 }
-function baixarKml(cities,folder){
+function kmlBlob(cities,folder){return new Blob([montarKml(cities,folder)],{type:'application/vnd.google-earth.kml+xml'});}
+function baixarKml(cities,folder,opc){
   folder=folder||kmlStamp();
-  const blob=new Blob([montarKml(cities,folder)],{type:'application/vnd.google-earth.kml+xml'});
-  baixarLocal(folder+'.kml',blob);
+  const blob=kmlBlob(cities,folder);
+  salvarMaterial(folder+'.kml',blob,opc);
   return blob.size;
 }
 $('downloadKml').onclick=()=>{
   const cities=[...state.selected].sort((a,b)=>a.localeCompare(b,'pt-BR'));if(!cities.length)return;
   const size=baixarKml(cities);
-  $('kmlStatus').textContent=`KML baixado no PC • ${Math.max(1,Math.round(size/1024))} KB • contorno vermelho sem preenchimento`;
+  $('kmlStatus').textContent=`KML pronto • ${Math.max(1,Math.round(size/1024))} KB • contorno vermelho sem preenchimento`;
 };
 
 /* ---------------- registro diário (.txt) ---------------- */
@@ -547,7 +555,7 @@ $('downloadTxt').onclick=()=>{
         btn.disabled=false;
         const rows=((r&&r.linhas)||[]).map(x=>[dataTxt(x.registradoEm),hhmm(x.horario)||x.horario,hhmm(x.duracao)||x.duracao,x.municipio].join('\t'));
         if(!rows.length){alert('Não há alertas válidos registrados no plantão '+rotuloTurno(t)+'.\n\nPara outro turno, escolha-o no campo "Plantão" (aba Plantão e relatório).');return;}
-        baixarLocal('alertas_'+ddmmaa(t.data)+'_'+t.turno.toLowerCase()+'.txt',new Blob([rows.join('\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));
+        salvarMaterial('alertas_'+ddmmaa(t.data)+'_'+t.turno.toLowerCase()+'.txt',new Blob([rows.join('\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));
       })
       .withFailureHandler(e=>{btn.disabled=false;alert('Não foi possível montar o .txt pela planilha: '+(e&&e.message||e));})
       .alertasDoTurno(t.data,t.turno);
@@ -557,7 +565,7 @@ $('downloadTxt').onclick=()=>{
   const today=dateBr();
   const rows=state.dailyRows.filter(r=>r.date===today).map(r=>[r.date,r.time,r.duration,r.city].join('\t'));
   if(!rows.length){alert('Não há alertas registrados para hoje.');return;}
-  baixarLocal('alertas_'+today.replaceAll('/','')+'.txt',new Blob([rows.join('\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));
+  salvarMaterial('alertas_'+today.replaceAll('/','')+'.txt',new Blob([rows.join('\r\n')+'\r\n'],{type:'text/plain;charset=utf-8'}));
 };
 
 /* ---------------- emitir alerta: salva KML no Drive + linhas na planilha ---------------- */
@@ -593,7 +601,9 @@ $('emit').onclick=()=>{
       const date=dateBr();
       cities.forEach(city=>state.dailyRows.push({alertId:a.id,date,time:a.start,duration:a.duration,city}));
       $('pAlertas').value=($('pAlertas').value.trim()?$('pAlertas').value.trim()+'\n':'')+a.linha;
-      if(querPc())baixarKml(cities,folder);   // cópia local, como no att_alerta (opção "Baixar também no PC")
+      // 2026.10.28: o KML já foi salvo no Drive na emissão; a ponte baixa no PC (se "baixar no PC" estiver marcado) e mostra o resultado em cores
+      if(window.SalvarMaterial)salvarMaterial(folder+'.kml',kmlBlob(cities,folder),{driveFeito:{url:a.kmlUrl,nome:folder+'.kml',texto:'(ao emitir o alerta)'},semPc:!querPc()});
+      else if(querPc())baixarKml(cities,folder);
       state.selected.clear();drawLine.style.display='none';HIST_SEL.length=0;atualizarDesfazer();
       desenharAlertas();updateSelection();salvarRascunho();
       $('modalback').style.display='none';
@@ -602,8 +612,8 @@ $('emit').onclick=()=>{
     .withFailureHandler(err=>{
       $('emit').disabled=false;
       emitStatus('Não foi possível emitir: '+(err&&err.message?err.message:err)+' O alerta não foi registrado na planilha.','erro');
-      const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent='Baixar o KML no PC mesmo assim';
-      b.onclick=()=>{baixarKml(cities,folder);b.textContent='KML baixado';b.disabled=true;};
+      const b=document.createElement('button');b.type='button';b.className='btn small';b.textContent='Salvar o KML mesmo assim';
+      b.onclick=()=>{baixarKml(cities,folder);};
       $('emitStatus').appendChild(document.createElement('br'));$('emitStatus').appendChild(b);
     })
     [temFuncao('registrarAlertaTurno')?'registrarAlertaTurno':'registrarAlerta'](payload);
@@ -620,7 +630,7 @@ function desenharAlertas(){
       `<div>${a.cities.length} município(s): ${esc(a.cities.join(', '))}</div>`+
       (/^https:\/\//.test(a.kmlUrl||'')?`<div><a href="${esc(a.kmlUrl)}" target="_blank" rel="noopener">Abrir KML no Drive</a></div>`:'')+
       `<div class="r"><button type="button" class="btn small download-kml">Baixar KML no PC</button>`+(meu?`<button type="button" class="btn small ghost delete-alert" style="color:var(--err)">Excluir alerta</button>`:'')+`</div>`;
-    card.querySelector('.download-kml').onclick=()=>baixarKml(a.cities,a.folder);
+    card.querySelector('.download-kml').onclick=()=>baixarKml(a.cities,a.folder,/^https:\/\//.test(a.kmlUrl||'')?{driveFeito:{url:a.kmlUrl,nome:a.folder+'.kml',texto:'(salvo ao emitir o alerta)'}}:null);   // 2026.10.28: KML da emissão já está no Drive
     if(meu)card.querySelector('.delete-alert').onclick=()=>{if(confirmarExclusao(a))deleteAlert(a);};
     a.cardEl=card;box.appendChild(card);
   });
@@ -903,6 +913,7 @@ function padraoPublicacoes(){
   if($('pPub2Per')&&!$('pPub2Per').value)$('pPub2Per').value='Tarde';
 }
 
+window.salvarNoNavegador=()=>salvarRascunho();   // 2026.10.28: botão padrão "Salvar neste navegador" (assets/ponte-drive.js)
 function salvarRascunho(){
   try{
     const active=state.active.map(a=>{const c={...a};delete c.cardEl;return c;});
@@ -1437,8 +1448,8 @@ $('baixarRel').onclick=async()=>{
     const d=dadosRelatorio();d.mapa=await mapaDoRelatorio(municipiosAlertados(),true);d.mapaFmt=mapaCache.fmt;d.mapaProp=mapaCache.prop;
     await Promise.race([window.alertasJsPdf,new Promise(ok=>setTimeout(ok,15000))]).catch(()=>{});
     const r=gerarPdf(d);
-    baixarLocal(carimbo(d.geradoEm)+'_relatorio_plantao_'+(d.id||'previa')+'.pdf',r.blob);
-    relMsg('ok','PDF baixado no PC ('+r.paginas+' página'+(r.paginas>1?'s':'')+'). Ele <b>não</b> foi salvo no Drive nem encerra o plantão.');
+    salvarMaterial(carimbo(d.geradoEm)+'_relatorio_plantao_'+(d.id||'previa')+'.pdf',r.blob,{nota:'Prévia: não encerra o plantão. O relatório final vai para o Drive ao salvar a passagem.'});
+    relMsg('ok','PDF da prévia pronto ('+r.paginas+' página'+(r.paginas>1?'s':'')+'). A prévia <b>não</b> encerra o plantão.');
   }catch(e){relMsg('err','Não foi possível gerar o PDF: '+esc(e&&e.message||e));}
   finally{btn.classList.remove('busy');}
 };
@@ -1463,7 +1474,6 @@ async function relatorioFinal(snap,nomesLocais){
   const nome=nomeRelatorio(snap);
   ultimoRelatorio={nome,blob:r.blob};
   const pc=()=>baixarLocal(nome,r.blob);
-  pc();   // v3.4: o relatório final sempre baixa no PC (com ou sem e-mail)
   const b64=await new Promise((ok,no)=>{const fr=new FileReader();fr.onload=()=>ok(String(fr.result).split(',')[1]||'');fr.onerror=no;fr.readAsDataURL(r.blob);});
   const t=snap.turno||turnoPeloRelogio();
   // 1) Drive: salva sempre (em segundo plano, enquanto a pergunta do e-mail está na tela)
@@ -1481,7 +1491,16 @@ async function relatorioFinal(snap,nomesLocais){
     }
   }else lembrarEmailPlantao(snap.id);   // servidor ainda sem o Email.gs: mantém o lembrete antigo
   const d=await drive;
-  const partes=[];let erro=false;const acoes=[['Baixar de novo',pc]];
+  if(!window.SalvarMaterial)pc();
+  // 2026.10.28: salvamento padrão — baixa no PC e mostra em cores o resultado do Drive (feito pela passagem)
+  const janela=()=>salvarMaterial(nome,r.blob,{
+    nota:'Relatório do plantão '+snap.id+'. Vai para o Drive sozinho ao salvar a passagem.',
+    drivePromessa:d.ok?Promise.resolve({url:d.s&&d.s.url,nome:(d.s&&d.s.nome)||nome,texto:'(pasta do plantão)'}):Promise.reject(d.e),
+    salvarDrive:(blob,b64)=>new Promise((ok,no)=>google.script.run.withSuccessHandler(s=>ok({url:s&&s.url,nome:(s&&s.nome)||nome,texto:'(pasta do plantão)'})).withFailureHandler(no)
+      [temFuncao('salvarRelatorioPlantaoTurno')?'salvarRelatorioPlantaoTurno':'salvarRelatorioPlantao'](snap.id,nome,b64,'',t.data||'',t.turno||''))
+  });
+  const salvarAcao=['Baixar de novo no PC',pc];
+  const partes=[];let erro=false;const acoes=[salvarAcao];
   if(d.ok){
     const url=/^https:\/\//.test(d.s&&d.s.url)?d.s.url:'#';
     partes.push('Relatório salvo no Drive: <a href="'+esc(url)+'" target="_blank" rel="noopener">'+esc(d.s&&d.s.nome||nome)+'</a>'+(snap.mapa?'':' (sem a imagem do mapa)'));
@@ -1495,10 +1514,11 @@ async function relatorioFinal(snap,nomesLocais){
     acoes.push(['Tentar enviar o e-mail de novo',async()=>{
       if(enviando)return;enviando=true;
       const x=await enviarEmailRelatorio(snap.id,nome,b64,t);enviando=false;
-      aviso(x.ok?'E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>.':'<b>O e-mail NÃO foi enviado</b> ('+esc(x.e&&x.e.message?x.e.message:x.e)+'). Envie o PDF manualmente.',!x.ok,[['Baixar de novo',pc]]);
+      aviso(x.ok?'E-mail enviado para <b>'+esc(NOMES_EMAIL_PLANTAO)+'</b>.':'<b>O e-mail NÃO foi enviado</b> ('+esc(x.e&&x.e.message?x.e.message:x.e)+'). Envie o PDF manualmente.',!x.ok,[salvarAcao]);
     }]);
   }else if(temFuncao('enviarRelatorioPorEmail'))partes.push('E-mail não enviado (você escolheu "Não").');
   aviso(partes.join('<br>'),erro,acoes);
+  if(window.SalvarMaterial)janela();   // PC + resultado do Drive em cores
 }
 
 /* ---- v3.4: envio do relatório por e-mail (função enviarRelatorioPorEmail do Email.gs) ---- */
