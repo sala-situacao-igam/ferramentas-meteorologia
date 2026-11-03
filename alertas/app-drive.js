@@ -490,7 +490,7 @@ function applyAlertPreset(){
 function buildMessage(){
   const type=$('type').value,t=$('time').value,dur=$('duration').value,ph=fenomenos();
   const cities=[...state.selected].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  $('message').value=`Alerta de ${type}${ph.length?' com '+textList(ph):''} às ${t}h com duração de ${dur}h. Cidades: ${textList(cities)}. FONTE: SIMGE/IGAM`;
+  $('message').value=(state.renovando?'RENOVAÇÃO — ':'')+`Alerta de ${type}${ph.length?' com '+textList(ph):''} às ${t}h com duração de ${dur}h. Cidades: ${textList(cities)}. FONTE: SIMGE/IGAM`;
 }
 function emitStatus(texto,tipo){$('emitStatus').className='st'+(tipo?' '+tipo:'');$('emitStatus').textContent=texto;}
 function openModal(){
@@ -503,7 +503,7 @@ function openModal(){
   applyAlertPreset();$('modalback').style.display='flex';
 }
 $('create').onclick=openModal;
-$('cancel').onclick=()=>$('modalback').style.display='none';
+$('cancel').onclick=()=>{$('modalback').style.display='none';if(state.renovando){fimRenovacao();state.selected.clear();updateSelection();}};
 $('type').addEventListener('change',applyAlertPreset);
 ['duration','time'].forEach(id=>$(id).addEventListener('change',buildMessage));
 document.querySelectorAll('.phen').forEach(x=>x.addEventListener('change',buildMessage));
@@ -578,13 +578,14 @@ $('emit').onclick=()=>{
   }
   const folder=kmlStamp();
   const a={id:'',kmlUrl:'',type:$('type').value,owner:$('owner').value.trim()||$('pResp').value.trim()||'Sem identificação',
-    start,end:endTime(start,dur),duration:dur,cities,phen:fenomenos(),message:$('message').value,folder};
+    start,end:endTime(start,dur),duration:dur,cities,phen:fenomenos(),message:$('message').value,folder,renovaDe:state.renovando?(state.renovando.id||''):''};
   const payload={
     data:$('pData').value||hojeLocal(),horario:a.start,duracao:a.duration,fim:a.end,tipo:a.type,
     fenomenos:a.phen,responsavel:a.owner,mensagem:a.message,
     municipios:cities.map(n=>{const p=featureByName.get(n).properties;return{nome:n,meso:p.meso||'',lat:p.label_lat,lon:p.label_lon};}),
     kml:montarKml(cities,folder),
-    turno:state.turno.turno,dataTurno:state.turno.data
+    turno:state.turno.turno,dataTurno:state.turno.data,
+    renovacaoDe:a.renovaDe   // v4.1: ID do alerta renovado (o Apps Script pode ignorar)
   };
   $('emit').disabled=true;emitStatus('Salvando o KML no Drive e o alerta na planilha…');
   google.script.run
@@ -593,7 +594,7 @@ $('emit').onclick=()=>{
       a.id=(r&&r.id)||('local_'+Date.now());a.kmlUrl=(r&&r.kmlUrl)||'';
       a.meu=true;a.emitidoEm=Date.now();if(r&&r.plantaoId)state.plantaoId=r.plantaoId;
       a.expiresAt=expiryTimestamp(a.start,a.duration);
-      a.linha=`${a.start}–${a.end} ${a.type}${a.phen.length?' ('+a.phen.join(', ')+')':''}: ${a.cities.join(', ')}`;
+      a.linha=(a.renovaDe?'(renovação) ':'')+`${a.start}–${a.end} ${a.type}${a.phen.length?' ('+a.phen.join(', ')+')':''}: ${a.cities.join(', ')}`;
       if(r&&r.turno)aplicarTurnoDoServidor(r.turno);
       if(r&&r.avisoPasta)aviso(esc(r.avisoPasta),true);
       if(r&&r.plantaoId)carregarContexto();
@@ -606,7 +607,7 @@ $('emit').onclick=()=>{
       else if(querPc())baixarKml(cities,folder);
       state.selected.clear();drawLine.style.display='none';HIST_SEL.length=0;atualizarDesfazer();
       desenharAlertas();updateSelection();salvarRascunho();
-      $('modalback').style.display='none';
+      $('modalback').style.display='none';fimRenovacao();
       sincronizarAlertas();
     })
     .withFailureHandler(err=>{
@@ -626,11 +627,13 @@ function desenharAlertas(){
   state.active.forEach(a=>{
     const card=document.createElement('div');card.className='alert-card';
     const meu=podeExcluir(a);
-    card.innerHTML=`<b>${esc(a.type)}</b><div>${esc(a.start)}–${esc(a.end)} • ${esc(a.owner)}${meu?'':' (outro plantonista)'}</div><div class="alert-status">Vigente</div>`+
+    const ehRenov=!!a.renovaDe||/^RENOVAÇÃO/.test(a.message||'');
+    card.innerHTML=`<b>${esc(a.type)}${ehRenov?' <span style="font-weight:600;font-size:11px;color:#0b4f7a;background:#e3f1fa;border-radius:4px;padding:1px 6px;margin-left:4px">↻ renovação</span>':''}</b><div>${esc(a.start)}–${esc(a.end)} • ${esc(a.owner)}${meu?'':' (outro plantonista)'}</div><div class="alert-status">Vigente</div>`+
       `<div>${a.cities.length} município(s): ${esc(a.cities.join(', '))}</div>`+
       (/^https:\/\//.test(a.kmlUrl||'')?`<div><a href="${esc(a.kmlUrl)}" target="_blank" rel="noopener">Abrir KML no Drive</a></div>`:'')+
-      `<div class="r"><button type="button" class="btn small download-kml">Baixar KML no PC</button>`+(meu?`<button type="button" class="btn small ghost delete-alert" style="color:var(--err)">Excluir alerta</button>`:'')+`</div>`;
+      `<div class="r"><button type="button" class="btn small renovar-alerta">↻ Renovar</button><button type="button" class="btn small download-kml">Baixar KML no PC</button>`+(meu?`<button type="button" class="btn small ghost delete-alert" style="color:var(--err)">Excluir alerta</button>`:'')+`</div>`;
     card.querySelector('.download-kml').onclick=()=>baixarKml(a.cities,a.folder,/^https:\/\//.test(a.kmlUrl||'')?{driveFeito:{url:a.kmlUrl,nome:a.folder+'.kml',texto:'(salvo ao emitir o alerta)'}}:null);   // 2026.10.28: KML da emissão já está no Drive
+    card.querySelector('.renovar-alerta').onclick=()=>renovarAlerta(a);
     if(meu)card.querySelector('.delete-alert').onclick=()=>{if(confirmarExclusao(a))deleteAlert(a);};
     a.cardEl=card;box.appendChild(card);
   });
@@ -1856,6 +1859,7 @@ function alertasVigentesEm(cities){
   const t=Date.now(),alvo=new Set(cities),out=[];
   state.active.concat(herdadosVigentes(t)).forEach(a=>{
     if(a.expiresAt&&a.expiresAt<=t)return;            // vencido: pode emitir de novo
+    if(state.renovando&&(a===state.renovando||(a.id&&a.id===state.renovando.id)))return;   // v4.1: é o próprio alerta sendo renovado
     const em=(a.cities||[]).filter(n=>alvo.has(n));
     if(em.length)out.push({a,em});
   });
@@ -1913,11 +1917,43 @@ function desenharHerdados(){
     card.innerHTML=`<b>${esc(a.type)}</b><div>${esc(a.start)}–${esc(a.end)} • ${esc(a.owner)}</div>`+
       `<div class="alert-status">${c==='expiring'?'Perto de vencer':'Vigente'} · plantão anterior</div>`+
       `<div>${a.cities.length} município(s): ${esc(a.cities.join(', '))}</div>`+
-      (/^https:\/\//.test(a.kmlUrl||'')?`<div><a href="${esc(a.kmlUrl)}" target="_blank" rel="noopener">Abrir KML no Drive</a></div>`:'');
+      (/^https:\/\//.test(a.kmlUrl||'')?`<div><a href="${esc(a.kmlUrl)}" target="_blank" rel="noopener">Abrir KML no Drive</a></div>`:'')+
+      `<div class="r"><button type="button" class="btn small renovar-alerta">↻ Renovar</button></div>`;
+    card.querySelector('.renovar-alerta').onclick=()=>renovarAlerta(a);
     box.appendChild(card);
   });
 }
 setInterval(desenharHerdados,30000);   // tira da lista quem venceu (o mapa já é repintado a cada 30 s)
+
+/* ---- v4.1: Renovar alerta ----
+   Abre a janela de emissão já preenchida com os mesmos municípios, tipo e fenômenos do alerta escolhido.
+   Horário = agora (editável) e a duração é escolhida de novo (1, 2 ou 3 h). Ao emitir, a renovação vira um
+   alerta NOVO (nova linha na planilha, novo KML, nova mensagem com "RENOVAÇÃO"); o alerta original fica como está. */
+function renovarAlerta(a){
+  if($('modalback').style.display==='flex')return;
+  const validos=(a.cities||[]).filter(n=>featureByName.has(n));
+  if(!validos.length){alert('Este alerta não tem municípios reconhecidos para renovar.');return;}
+  if(state.selected.size&&!confirm('Há municípios selecionados no mapa. Trocar a seleção pelos municípios deste alerta para renovar?'))return;
+  state.renovando=a;
+  state.selected=new Set(validos);updateSelection();
+  openModal();
+  if([...$('type').options].some(o=>o.value===a.type||o.text===a.type)){$('type').value=a.type;}
+  applyAlertPreset();
+  if(Array.isArray(a.phen)&&a.phen.length)document.querySelectorAll('.phen').forEach(b=>b.checked=a.phen.includes(b.value));
+  $('duration').value='01:00';
+  $('tituloModal').textContent='Renovar alerta';
+  $('emit').textContent='Emitir renovação';
+  buildMessage();
+  emitStatus('Renovação do alerta '+a.start+'–'+a.end+' ('+(a.owner||'')+'). Escolha a nova duração e confira o horário de início. '+
+    'Será registrado como um alerta novo, com KML próprio; o original continua na lista.');
+  $('duration').focus();
+}
+function fimRenovacao(){
+  state.renovando=null;
+  $('tituloModal').textContent='Novo alerta';
+  $('emit').textContent='Emitir alerta';
+}
+state.renovando=null;
 
 const emitirAgora=$('emit').onclick;
 $('emit').onclick=()=>{
