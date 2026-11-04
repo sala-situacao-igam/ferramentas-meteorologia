@@ -1620,7 +1620,7 @@ function salvarPassagemAgora(){
 }
 $('salvarPlantao').onclick=()=>{
   if(!turnoCompleto()){status('Marque a data de início e o turno do plantão.','erro');$(state.turno.data?'pTurno':'pData').focus();return;}   // v4.2
-  if(!$('pResp').value.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').focus();return;}
+  if(!$('pResp').value.trim()){status('Preencha o campo "Responsável".','erro');$('pResp').style.boxShadow='0 0 0 2px #b42318';$('pResp').focus();return;}
   if(!conferirObrigatorios())return;   // v3.6: ferramentas e intercorrências (os dois turnos)
   if($('pIntIni')&&(!$('pIntIni').value)!==(!$('pIntFim').value)){   // v3.7: intervalo pela metade
     status('Preencha o início e o fim do intervalo (ou deixe os dois em branco).','erro');
@@ -1816,49 +1816,50 @@ function sucessorTurno(u){
 /* seletor "Plantão": linha própria ACIMA da grade Data/Início/Fim, para não desalinhar a grade.
    Criado aqui para não precisar mexer no Alertas.html; copia o visual do campo "Início". */
 (function criarSeletorTurno(){
-  if($('pTurno')||!$('pInicio'))return;
-  const celula=$('pInicio').parentElement,grade=celula.parentElement;
-  const labRef=celula.querySelector('label')||grade.querySelector('label');
+  if($('pTurno')||!$('pInicio')||!$('pData'))return;
+  // estrutura do Alertas.html: <label>Responsável…</label> <div.par>[<label>Data…</label> <div.par>[Entrada][Saída]]</div>
+  const labData=$('pData').closest('label'),parExterna=labData&&labData.parentElement;
+  const parHoras=$('pInicio').closest('.par');
+  if(!labData||!parExterna||!parHoras)return;
+  const cor='color:#b42318;margin-left:2px';
+  /* título do campo + asterisco num único <span> (o <label> é grid: cada filho vira uma linha) */
+  function tituloObrigatorio(label,texto){
+    if(!label)return;
+    const tx=[...label.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());
+    const s=document.createElement('span');s.innerHTML=texto+'<span style="'+cor+'" aria-hidden="true">*</span>';
+    if(tx)label.replaceChild(s,tx);else label.insertBefore(s,label.firstChild);
+  }
+  tituloObrigatorio($('pResp').closest('label'),'Responsável');
+  $('pResp').required=true;
+  $('pResp').addEventListener('input',()=>{if($('pResp').value.trim())$('pResp').style.boxShadow='';});
+  tituloObrigatorio(labData,'Data de início do plantão');
+  $('pData').required=true;$('pData').value='';
+  // avisos: linha própria, entre o Responsável e a grade de Data/Turno
   const bloco=document.createElement('div');
-  bloco.id='blocoTurno';
-  bloco.style.cssText='display:flex;flex-direction:column;gap:8px;margin:0 0 12px';
-  // aviso fixo
+  bloco.id='blocoTurno';bloco.style.cssText='display:flex;flex-direction:column;gap:8px;margin:2px 0 10px';
   const fixo=document.createElement('div');
   fixo.id='pTurnoFixo';fixo.setAttribute('role','note');
   fixo.style.cssText='font-size:13px;font-weight:600;color:#6b4a00;background:#fff4d6;border-left:4px solid #e0b33a;padding:8px 10px;border-radius:4px';
-  fixo.textContent='⚠ O salvamento correto dos arquivos (alertas, KML e relatório) depende da data de início e do turno marcados aqui.';
-  // último plantão + sugestão
+  fixo.textContent='⚠ O salvamento correto dos arquivos (alertas, KML e relatório) depende da data de início e do turno marcados abaixo.';
   const ult=document.createElement('div');
   ult.id='pTurnoUltimo';ult.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px';
-  // seletor
-  const linha=document.createElement('div');
-  linha.id='linhaTurno';
-  linha.style.cssText='display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px';
-  const lab=document.createElement('label');
-  lab.htmlFor='pTurno';lab.innerHTML='Turno do plantão <span style="color:#b42318">*</span>';
-  if(labRef)lab.className=labRef.className;
-  lab.style.margin='0';
+  bloco.append(fixo,ult);
+  parExterna.parentElement.insertBefore(bloco,parExterna);
+  // Turno: mesmo formato do campo Data, na mesma linha (no lugar de Entrada/Saída, que descem uma linha)
+  const labTurno=document.createElement('label');
   const sel=document.createElement('select');
-  sel.id='pTurno';sel.className=$('pInicio').className;sel.required=true;
+  sel.id='pTurno';sel.className=$('pData').className;sel.required=true;sel.style.cursor='pointer';
   sel.innerHTML='<option value="">— escolha —</option><option value="Diurno">Diurno (07:00 às 19:00)</option><option value="Noturno">Noturno (19:00 às 07:00)</option>';
-  try{   // mesmo visual do campo de hora
-    const cs=getComputedStyle($('pInicio'));
-    ['border','borderRadius','padding','fontFamily','fontSize','fontWeight','color','backgroundColor','lineHeight']
-      .forEach(k=>{if(cs[k])sel.style[k]=cs[k];});
-  }catch(e){}
-  sel.style.width='auto';sel.style.minWidth='210px';sel.style.margin='0';sel.style.cursor='pointer';
-  const info=document.createElement('span');
-  info.id='pTurnoInfo';info.style.cssText='font-size:12px;opacity:.75';
-  linha.append(lab,sel,info);
-  bloco.append(fixo,ult,linha);
-  grade.parentElement.insertBefore(bloco,grade);
-  // rótulo da data: "Data de início do plantão *" (o texto fica antes do <input>, dentro do <label>)
-  const labData=$('pData').closest('label');
-  if(labData){const tx=[...labData.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());
-    if(tx){tx.textContent='Data de início do plantão ';const s=document.createElement('span');s.style.color='#b42318';s.textContent='*';labData.insertBefore(s,tx.nextSibling);}}
-  $('pData').required=true;$('pData').value='';
+  labTurno.append(document.createTextNode('Turno do plantão'),sel);
+  tituloObrigatorio(labTurno,'Turno do plantão');
+  parExterna.insertBefore(labTurno,parHoras);
+  // pasta do Drive logo abaixo da linha Data/Turno; Entrada/Saída em linha própria
+  const info=document.createElement('p');
+  info.id='pTurnoInfo';info.style.cssText='margin:6px 0 10px;font-size:12px;opacity:.75';
+  parExterna.after(info);
+  info.after(parHoras);
   // horários padrão: preenchidos pelo turno, sem edição
-  ['pInicio','pFim'].forEach(id=>{$(id).readOnly=true;$(id).value='';$(id).style.cursor='not-allowed';$(id).title='Horário padrão do turno';});
+  ['pInicio','pFim'].forEach(id=>{$(id).readOnly=true;$(id).value='';$(id).style.cursor='not-allowed';$(id).style.opacity='.8';$(id).title='Horário padrão do turno';});
 })();
 
 /* aviso que trava a tela ao abrir a página */
@@ -1909,7 +1910,7 @@ function mostrarTurno(){
     info.textContent='Pasta no Drive: '+pasta+(quem?' · definido no 1º alerta ('+quem+')':'');
     info.title=quem?'Turno definido no primeiro alerta do plantão por '+turnoServidor.por+'.':'';
   }
-  ['pData','pTurno'].forEach(id=>{if($(id).value)$(id).style.boxShadow='';});
+  ['pData','pTurno','pResp'].forEach(id=>{if($(id).value)$(id).style.boxShadow='';});
 }
 function preencherHorariosTurno(){
   const h=TURNOS[state.turno.turno];
@@ -1965,7 +1966,8 @@ if($('pTurno')){
       return;
     }
     if(!($('owner').value.trim()||$('pResp').value.trim())){
-      avisoEmit('Preencha o <b>responsável</b> pelo alerta. Os municípios marcados continuam aqui.');try{$('owner').focus();}catch(e){}
+      marcar('pResp');
+      avisoEmit('Preencha o <b>responsável</b> (aba Plantão ou campo do alerta). Os municípios marcados continuam aqui.');try{$('owner').focus();}catch(e){}
       return;
     }
     const pastaDefinida=!!(turnoServidor&&state.plantaoId);
