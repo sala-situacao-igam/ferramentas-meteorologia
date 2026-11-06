@@ -1,5 +1,6 @@
 /*
- * Sugestões — botão "Sugestões" na barra de cada ferramenta (v1.0, 06/11/2026).
+ * Sugestões — botão "Sugestões" na barra de cada ferramenta (v1.2, 06/11/2026).
+ * v1.2: sem o campo de nome; quem enviou fica registrado só pelo e-mail Google (o Apps Script grava).
  * Carregado pelo assets/planner.js (as páginas não precisam mudar).
  * A ferramenta é a da página em que a janela foi aberta (não dá para trocar), para cada sugestão
  * ficar ligada à ferramenta certa. Só existe DENTRO das ferramentas (Apps Script, com login);
@@ -64,8 +65,7 @@
     TIPOS.map(function (f) { return '<option>' + esc(f) + '</option>'; }).join('') + '</select></div></div>' +
     '<label for="sugTexto">Sugestão *</label><textarea id="sugTexto" maxlength="4000" placeholder="Ex.: no mapa de alertas, seria útil…"></textarea>' +
     '<div class="sug-cont" id="sugCont">0 / 4000</div>' +
-    '<label for="sugNome">Seu nome (opcional)</label><input id="sugNome" maxlength="120" autocomplete="name">' +
-    '<div class="sug-acoes"><span class="sug-st" id="sugSt" role="status" aria-live="polite">Seu e-mail Google é enviado junto.</span>' +
+    '<div class="sug-acoes"><span class="sug-st" id="sugSt" role="status" aria-live="polite">A sugestão fica registrada com o seu e-mail Google.</span>' +
     '<button type="button" class="sug-b" id="sugFechar">Fechar</button><button type="button" class="sug-b pri" id="sugEnviar">Enviar</button></div>' +
     '</div>';
   function $(id) { return back.querySelector('#' + id); }
@@ -75,8 +75,7 @@
   function abrir() {
     back.hidden = false;
     $('sugFer').textContent = FERRAMENTA_PAGINA; $('sugTitFer').textContent = FERRAMENTA_PAGINA;
-    try { if (!$('sugNome').value) $('sugNome').value = localStorage.getItem('sug-nome') || ''; } catch (e) {}
-    if (!ocupado) status('Seu e-mail Google é enviado junto.');
+    if (!ocupado) status('A sugestão fica registrada com o seu e-mail Google.');
     $('sugTexto').focus();
   }
   function fechar() { if (ocupado) return; back.hidden = true; btn.focus(); }
@@ -90,9 +89,7 @@
     var texto = $('sugTexto').value.trim();
     if (texto.length < 5) { status('Escreva a sugestão antes de enviar.', 'erro'); $('sugTexto').focus(); return; }
     if (!temServidor) { status('O envio só funciona dentro do app (Apps Script).', 'erro'); return; }
-    var nome = $('sugNome').value.trim();
-    try { localStorage.setItem('sug-nome', nome); } catch (e) {}
-    var d = { texto: texto, nome: nome, ferramenta: FERRAMENTA_PAGINA, tipo: $('sugTipo').value,
+    var d = { texto: texto, ferramenta: FERRAMENTA_PAGINA, tipo: $('sugTipo').value,
       pagina: document.title + (window.VERSAO_APP ? ' · v' + window.VERSAO_APP : '') };
     ocupado = true; $('sugEnviar').disabled = true; $('sugFechar').disabled = true; status('Enviando…');
     google.script.run
