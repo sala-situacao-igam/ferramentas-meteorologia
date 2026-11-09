@@ -2580,8 +2580,10 @@ function carregarSite(data){
   }).alertasParaSite(data);
 }
 (function botaoSite(){
-  const ref=$('downloadTxt');if(!ref||$('alertasSite'))return;
-  const b=document.createElement('button');b.type='button';b.className=ref.className||'tool';b.id='alertasSite';b.textContent='📋 Alertas para o site';
+  // ao lado de "↶ Desfazer último" (o "Alertas do dia (.txt)" fica escondido: foi para OPÇÕES DE SALVAMENTO).
+  // Classe própria: não copia a do botão vizinho, que a ponte de salvamento marca como oculto (sm-oculto).
+  const ref=$('undoLastAlert')||$('downloadTxt');if(!ref||$('alertasSite'))return;
+  const b=document.createElement('button');b.type='button';b.className='tool';b.id='alertasSite';b.textContent='📋 Alertas para o site';
   b.title='Todos os alertas emitidos no dia, prontos para colar no site SIMGE';
   b.onclick=abrirSite;ref.insertAdjacentElement('afterend',b);
 })();
