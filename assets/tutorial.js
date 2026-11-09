@@ -50,13 +50,13 @@
   var PASSOS = {
     'previsao': [
       { s: '#date', t: 'Data da previsão', d: 'Dia da previsão.' },
-      { s: '#valTime', t: 'Validade', d: 'Já vem com 10h do dia seguinte.' },
+      { s: '#valTime', t: 'Validade', d: 'Já vem com 09h do dia seguinte. No mapa: VÁLIDO: 09h DD/MM às 09h DD/MM, hora local.' },
       { s: '#rows .trow .cond', t: 'Condição do tempo', d: 'Escolha o ícone de cada cidade.' },
       { s: '#rows .trow .wmx', t: 'Máxima e mínima', d: 'Ex.: 30 ou 18,5. A tecla Tab avança para o próximo campo.' },
       { s: '#bulkCond', t: 'Várias cidades de uma vez', d: 'Marque as linhas e aplique a mesma condição a todas.' },
       { s: '#paper', t: 'Mapa', d: 'Atualiza sozinho. Ícone cobrindo um nome: arraste o ícone.' },
       { s: '#bDate', t: 'Data por extenso', d: 'Automática.' },
-      { s: '#bVal', t: 'Período de vigência', d: 'Automático: 10h do dia seguinte.' },
+      { s: '#bVal', t: 'Período de vigência', d: 'Automático: 09h do dia seguinte.' },
       { s: '#bBlocks, #bParas', t: 'Blocos do PDF', d: 'Na ordem do PDF. Ícones, Tempo Severo e Chuva já vêm; as setas mudam a ordem. Escreva os parágrafos de cada bloco.' },
       { s: '#bAddMapa', t: 'Adicionar mapa', d: 'Para o que varia no dia (ex.: tendência, fim de semana). Os mapas vêm do Drive ou do computador.' },
       { s: 'button[data-ins="Nível 1"]', t: 'Botões Inserir', d: '°C, Nível 1, regiões e cores, sempre escritos do mesmo jeito.' },
@@ -67,7 +67,7 @@
     ],
     'tempo-severo': [
       { s: '#forecastDate', t: 'Data da previsão', d: 'Dia da previsão.' },
-      { s: '#validUntil', t: 'Válido até', d: '10h do dia seguinte.' },
+      { s: '#validUntil', t: 'Válido até', d: '09h do dia seguinte. No mapa: VÁLIDO: 09h DD/MM às 09h DD/MM, hora local.' },
       { s: '#levels', t: 'Categoria', d: 'Comece pela menos severa. A mais severa fica por cima.' },
       { s: '#drawBtn', t: 'Desenhar área', d: 'Clique ponto a ponto no mapa e dê duplo clique para fechar.' },
       { s: '#map', t: 'Mapa', d: 'Clique numa área pronta para editar: arraste os pontos, Enter conclui, Esc cancela.' },
@@ -82,7 +82,7 @@
       { s: '#tabTend', t: 'Tendência 48h', d: 'Mapa da tendência para os próximos 2 dias.' },
       { s: '#forecastDate', t: 'Data da previsão', d: 'Dia da previsão.' },
       { s: '#trendDate1', t: '1º e 2º dia', d: 'A validade se ajusta sozinha.' },
-      { s: '#validUntil', t: 'Válido até', d: '10h do dia seguinte.' },
+      { s: '#validUntil', t: 'Válido até', d: '09h do dia seguinte. No mapa: VÁLIDO: 09h DD/MM às 09h DD/MM, hora local.' },
       { s: '#levels', t: 'Faixa', d: 'Escolha a faixa de chuva. O maior acumulado fica por cima.' },
       { s: '#drawBtn', t: 'Desenhar área', d: 'Clique ponto a ponto no mapa e dê duplo clique para fechar.' },
       { s: '#map', t: 'Mapa', d: 'Clique numa área pronta para editar: arraste os pontos, Enter conclui, Esc cancela.' },
@@ -97,6 +97,7 @@
       { s: '#searchCity', t: 'Localizar município', d: 'Digite o nome e clique em Ir.' },
       { s: '#create', t: 'Criar alerta', d: 'Abre a janela do alerta com os municípios selecionados.' },
       { s: '#activeList', t: 'Alertas ativos', d: 'Alertas do plantão. A cor muda conforme o prazo.' },
+      { s: '#activeList .editar-alerta:not([hidden])', t: 'Editar alerta', d: 'Corrige um alerta seu ainda vigente (municípios, tipo, horário, duração). A versão corrigida substitui a original.' },
       { s: '#type', t: 'Tipo', d: 'Tipo do alerta.' },
       { s: '#duration', t: 'Duração', d: 'Padrão: 2 h.' },
       { s: '#time', t: 'Horário', d: 'Início do alerta (HH:MM).' },
@@ -119,12 +120,30 @@
     ],
     'reservatorios': [
       { s: '#cpcCycle', t: 'Ciclo', d: '00Z (≈3h) ou 06Z (≈9h).' },
-      { s: '#cpcLoad', t: 'Buscar imagens do CPC', d: 'Gera todos os mapas e preenche as datas.' },
+      { s: '#fonteDados', t: 'Fonte dos dados', d: 'Dado bruto GFS (chuva em mm, NOAA) ou Imagens do CPC. A escolha fica guardada neste navegador.' },
+      { s: '#cpcLoad', t: 'Buscar dados', d: 'Busca o ciclo escolhido, gera todos os mapas e preenche as datas.' },
       { s: '.tabs', t: 'Abas', d: 'Reservatórios, Tendência (Week 1 e 2) e Acumulados.' },
       { s: '#resStart', t: 'Período', d: 'Mude só se precisar e clique em Gerar mapa.' },
       { s: '#resGenerate', t: 'Gerar mapa', d: 'Só depois de mudar a data.' },
       { s: '#wkGenerate', t: 'Gerar Week 1 + Week 2', d: 'Só se mudar as imagens ou as datas.' },
       { s: '#accGenerate', t: 'Gerar acumulados', d: 'Só se mudar as imagens ou as datas.' },
+      SALVAR
+    ],
+    'curto-prazo': [
+      { s: '#cpStatus', t: 'Dados', d: 'GFS e WRF 7 km da rodada 00Z, baixados sozinhos a cada 2 horas.' },
+      { s: '[data-modo]', t: 'Visão', d: 'Por dia (09h às 09h de cada dia) ou Acumulado (24, 48 e 72 h).' },
+      { s: '#cpPeriodo', t: 'Dia ou período', d: 'Escolha o dia (ou o acumulado) do mapa e das tabelas.' },
+      { s: '[data-vista]', t: 'Modelo', d: 'GFS, WRF ou os dois lado a lado (Comparar).' },
+      { s: '#cpMapas', t: 'Mapa', d: 'No layout padrão. A Prévia do mapa mostra em tamanho grande.' },
+      { s: '#cpMesoBody', t: 'Mesorregiões', d: 'Faixa predominante, maior faixa e máximo em cada mesorregião.' },
+      SALVAR
+    ],
+    'umidade-minima': [
+      { s: '#urStatus', t: 'Dados', d: 'UR do WRF 7 km às 15h de 3 dias (rodada 00Z), baixada sozinha a cada 2 horas.' },
+      { s: '#urIso', t: 'Isolinhas', d: 'Quantas linhas aparecem no mapa. A escolha fica guardada neste navegador.' },
+      { s: '#urMapa', t: 'Mapa', d: 'Média da UR das 15h dos 3 dias. A Prévia do mapa mostra em tamanho grande.' },
+      { s: '#urMesoBody', t: 'Mesorregiões', d: 'Menor UR de cada dia e da média, com o estado do Manual (Observação, Atenção, Alerta, Emergência).' },
+      { s: '#abaRelBtn', t: 'Relatório (PDF)', d: 'Aviso Meteorológico no modelo da equipe: texto automático (editável), mapa e OBS.' },
       SALVAR
     ]
   };

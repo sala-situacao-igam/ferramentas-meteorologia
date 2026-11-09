@@ -91,6 +91,10 @@
     '#smJanela .prev figure{margin:0;border:1px solid #d3e4f2;border-radius:10px;background:#f6fafd;padding:8px;overflow:hidden}',
     '#smJanela .prev svg,#smJanela .prev img{display:block;width:100%;height:auto;max-height:260px;object-fit:contain;background:#fff;pointer-events:none}',
     '#smJanela .prev figcaption{font:600 12.5px "Barlow",Arial,sans-serif;color:#5f7393;margin-top:6px}',
+    '#smPreviaTela .prev{display:grid;gap:12px}#smPreviaTela .prev[hidden]{display:none}',
+    '#smPreviaTela .prev figure{margin:0;border:1px solid #d3e4f2;border-radius:10px;background:#f6fafd;padding:8px}',
+    '#smPreviaTela .prev svg,#smPreviaTela .prev img{display:block;width:100%;height:auto;max-height:80vh;object-fit:contain;background:#fff;pointer-events:none}',
+    '#smPreviaTela .prev figcaption{font:600 13px "Barlow",Arial,sans-serif;color:#5f7393;margin-top:6px}',
     '#smBotao{position:fixed;right:22px;bottom:22px;z-index:99980;display:inline-flex;align-items:center;gap:12px;border:3px solid #fff;border-radius:16px;background:#ffb703;color:#092b6a;padding:12px 20px 12px 14px;font:800 16px/1.1 "Barlow",Arial,"Liberation Sans",sans-serif;letter-spacing:.04em;cursor:pointer;text-align:left;box-shadow:0 0 0 2px #092b6a,0 10px 28px rgba(0,0,0,.35);transition:transform .15s,box-shadow .15s}',
     '#smBotao:hover{transform:translateY(-2px);background:#ffc93c;box-shadow:0 0 0 2px #092b6a,0 14px 34px rgba(0,0,0,.4)}',
     '#smBotao:focus-visible{outline:3px solid #006cbf;outline-offset:3px}',
@@ -209,6 +213,18 @@
       { info: true, alvo: '#salvarPlantao', tipo: 'PDF', nome: 'Relatório final do plantão', vista: '#viewPlantao',
         desc: 'É salvo ao encerrar o plantão (Drive, PC e e-mail). Use Salvar passagem e gerar relatório.', botao: 'Ir para o botão' }
     ],
+    // ferramentas novas (09/11/2026)
+    'curto-prazo': [
+      { id: 'cpPngA', nome: 'Mapa de chuva', tipo: 'PNG', desc: 'Modelo e período da tela (no Comparar: GFS)', precisa: 'Clique em “Carregar dados”' },
+      { id: 'cpPngB', nome: 'Mapa de chuva (WRF)', tipo: 'PNG', desc: 'Só no Comparar', precisa: 'Clique em “Carregar dados”' },
+      { id: 'cpCsvMeso', nome: 'Tabela das mesorregiões', tipo: 'CSV', precisa: 'Clique em “Carregar dados”' },
+      { id: 'cpCsvCid', nome: 'Tabela das cidades', tipo: 'CSV', precisa: 'Clique em “Carregar dados”' }
+    ],
+    'umidade-minima': [
+      { id: 'urPng', nome: 'Mapa de umidade mínima', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#abaMapa', precisa: 'Clique em “Carregar dados”' },
+      { id: 'urCsv', nome: 'Tabela das mesorregiões', tipo: 'CSV', vista: '#abaMapa', precisa: 'Clique em “Carregar dados”' },
+      { id: 'relPdf', nome: 'Relatório (Aviso Meteorológico)', tipo: 'PDF', desc: 'A4, igual à prévia', vista: '#abaRel', onde: 'Relatório (PDF)', aba: '#abaRelBtn', precisa: 'Carregue os dados na aba Mapa e tabela' }
+    ],
     'reservatorios': [
       { id: 'resPng', nome: 'Reservatórios', tipo: 'PNG', desc: 'Mapa Week 1', onde: 'Reservatórios · Week 1', aba: '.tab[data-tab=reserv]', precisa: 'Clique em “Gerar mapa” na aba Reservatórios' },
       { id: 'resCsv', nome: 'Reservatórios', tipo: 'CSV', desc: 'Tabela de precipitação', onde: 'Reservatórios · Week 1', aba: '.tab[data-tab=reserv]', precisa: 'Clique em “Gerar mapa” na aba Reservatórios' },
@@ -249,9 +265,11 @@
   // seletores dos mapas/páginas que a ferramenta mostra na tela; aparece a que estiver visível.
   var PREVIAS = {
     'previsao': [['#paper svg', 'Mapa do dia'], ['#bPages .a4 svg', 'Boletim (página 1)'], ['#cPages .a4 svg', 'Previsão por cidade (página 1)']],
-    'tempo-severo': [['#lmPainel [data-folha]', 'Mapa final', layoutAoVivo]],
-    'chuva': [['#lmPainel [data-folha]', 'Mapa final', layoutAoVivo]],
+    'tempo-severo': [[null, 'Mapa final', layoutAoVivo]],   // 09/11: sem o painel na tela, monta na hora
+    'chuva': [[null, 'Mapa final', layoutAoVivo]],   // 09/11: sem o painel na tela, monta na hora
     'alertas': [['#mapSvg', 'Mapa de alertas'], ['#relPages .a4 svg', 'Relatório (página 1)']],
+    'curto-prazo': [['#cpMapaA img', 'Mapa'], ['#cpMapaB img', 'WRF']],
+    'umidade-minima': [['#urMapa img', 'Mapa de umidade mínima'], ['#relCanvas', 'Relatório (página 1)']],
     'reservatorios': [['#resCanvas', 'Reservatórios'], ['#wk1Canvas', 'Week 1'], ['#wk2Canvas', 'Week 2'],
       ['#a24Canvas', '24 h'], ['#a72Canvas', '3 dias'], ['#a120Canvas', '5 dias']]
   };
@@ -274,14 +292,14 @@
     }
     return c;
   }
-  function desenharPrevias() {
-    var box = fundo.querySelector('.prev');
+  function desenharPrevias() { return previasEm(fundo.querySelector('.prev')); }
+  function previasEm(box) {
     box.innerHTML = '';
     var achou = 0;
     (PREVIAS[FERRAMENTA()] || []).forEach(function (pv) {
-      var el = document.querySelector(pv[0]);
-      if (!visivel(el)) return;
-      var c = copiaDaTela(el);
+      var el = pv[0] ? document.querySelector(pv[0]) : null;
+      if (pv[0] && !visivel(el)) return;
+      var c = el ? copiaDaTela(el) : null;
       if (!c && pv[2]) { var h = pv[2](); if (h) { var t = document.createElement('div'); t.innerHTML = h; c = t.querySelector('svg'); if (c) { c.removeAttribute('width'); c.removeAttribute('height'); } } }
       if (!c) return;
       c.setAttribute('aria-hidden', 'true');
@@ -292,6 +310,38 @@
     });
     box.className = 'prev' + (achou > 1 ? ' duas' : '');
     box.hidden = !achou;
+    return achou;
+  }
+  /* ---------------- botão "Prévia do mapa" (09/11/2026): em todas as ferramentas ----------------
+     Tempo Severo e Chuva já têm o próprio (#previewBtn). Nas outras, abre uma janela com o mapa da aba aberta
+     (as mesmas prévias do painel de salvamento). */
+  var IC_OLHO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  function abrirPreviaTela() {
+    var m = document.getElementById('smPreviaTela');
+    if (!m) {
+      m = document.createElement('div'); m.id = 'smPreviaTela'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Prévia do mapa');
+      m.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(9,43,106,.45);display:flex;align-items:center;justify-content:center;padding:16px';
+      m.innerHTML = '<div style="background:#fff;border-radius:12px;padding:14px;width:min(1200px,96vw);max-height:94vh;overflow:auto;box-shadow:0 12px 40px rgba(0,0,0,.3)">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font:600 15px Barlow,Arial,sans-serif;color:#092b6a"><span style="flex:1">Prévia do mapa</span>' +
+        '<button type="button" data-fechar style="border:1px solid #c9d8ea;background:#fff;border-radius:8px;padding:5px 12px;font:600 13px Barlow,Arial,sans-serif;color:#092b6a;cursor:pointer">Fechar</button></div>' +
+        '<div class="prev" data-caixa></div><div data-vazio style="font:500 14px Barlow,Arial,sans-serif;color:#6b7f9e;padding:20px 6px">Ainda não há mapa nesta aba. Gere o mapa e abra a prévia de novo.</div></div>';
+      m.addEventListener('click', function (e) { if (e.target === m || e.target.hasAttribute('data-fechar')) m.style.display = 'none'; });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && m.style.display !== 'none') m.style.display = 'none'; });
+      document.body.appendChild(m);
+    }
+    var n = previasEm(m.querySelector('[data-caixa]'));
+    m.querySelector('[data-vazio]').style.display = n ? 'none' : 'block';
+    m.style.display = 'flex';
+  }
+  function botaoPrevia() {
+    if (document.getElementById('previewBtn') || document.getElementById('smPreviaBtn')) return;
+    var b = document.createElement('button'); b.type = 'button'; b.id = 'smPreviaBtn'; b.className = 'btn';
+    b.innerHTML = IC_OLHO + 'Prévia do mapa'; b.title = 'Ver o mapa da aba aberta em tamanho grande';
+    b.onclick = abrirPreviaTela;
+    var acoes = document.querySelector('body > .bar .actions');
+    if (acoes) { acoes.insertBefore(b, acoes.firstChild); return; }
+    var top = document.querySelector('body > header .top');
+    if (top) { b.className = 'secondary'; b.style.cssText = 'display:inline-flex;align-items:center;gap:7px;flex:none;white-space:nowrap'; b.querySelector('svg').style.cssText = 'width:16px;height:16px;flex:none'; var pl = document.getElementById('plannerBtn'); if (pl && pl.parentNode === top) top.insertBefore(b, pl); else top.appendChild(b); }
   }
   var SEMPRE_ESCONDER = { 'alertas': ['#downloadKml', '.alert-card .download-kml'] };   // salvos pelo Criar alerta
   function esconderBotoes() {
@@ -324,7 +374,7 @@
   function fechar() { fundo.classList.remove('on'); if (botao) botao.focus(); }
   function aberto() { return !!(fundo && fundo.classList.contains('on')); }
 
-  var NOMES = { 'previsao': 'Previsão diária', 'tempo-severo': 'Tempo Severo', 'chuva': 'Chuva e Tendência', 'alertas': 'Alertas', 'reservatorios': 'Reservatórios e Tendência' };
+  var NOMES = { 'previsao': 'Previsão diária', 'tempo-severo': 'Tempo Severo', 'chuva': 'Chuva e Tendência', 'alertas': 'Alertas', 'reservatorios': 'Reservatórios e Tendência', 'curto-prazo': 'Curto Prazo', 'umidade-minima': 'Umidade Mínima' };
   function nomeDoMapa() {   // ferramenta · aba aberta (ex.: "Previsão diária · Boletim em PDF")
     var aba = document.querySelector('[role=tab][aria-selected=true], .tab.active');
     var t = aba ? aba.textContent.replace(/\s+/g, ' ').trim() : '';
@@ -424,7 +474,7 @@
   }
 
   /* ---------------- conferência do padrão (antes de salvar) ---------------- */
-  // Padrões do Guia Rápido: mapa base OSM padrão; validade às 10h do dia seguinte; nenhuma cidade "Sem informação";
+  // Padrões do Guia Rápido: mapa base OSM padrão; validade às 09h do dia seguinte; nenhuma cidade "Sem informação";
   // imagens do CPC com menos de 36 h. Fora do padrão, o painel avisa e pede confirmação antes de salvar.
   var NOME_FUNDO = { '': 'Nenhum', osm: 'OSM padrão', osmfr: 'OSM França', osmde: 'OSM Alemanha', ofm: 'OpenFreeMap (sem nomes)' };
   function valor(id) { var e = document.getElementById(id); return e ? e.value : null; }
@@ -448,8 +498,8 @@
     }
     if (fer === 'previsao' && ehMapa(m)) {
       var d = valor('date'), vt = valor('valTime'), vd = valor('valDate');
-      if (d && vt != null && vd != null && (vt !== '10:00' || vd !== maisUmDia(d)))
-        f.push('Validade: <b>' + esc(vt || '—') + ' do dia ' + esc(br(vd)) + '</b> (padrão: 10h do dia ' + esc(br(maisUmDia(d))) + ').');
+      if (d && vt != null && vd != null && (vt !== '09:00' || vd !== maisUmDia(d)))
+        f.push('Validade: <b>' + esc(vt || '—') + ' do dia ' + esc(br(vd)) + '</b> (padrão: 09h do dia ' + esc(br(maisUmDia(d))) + ').');
       if (/Mapa do dia/.test(m.nome)) {
         var sem = [].slice.call(document.querySelectorAll('#rows .trow')).filter(function (r) { return /Sem informa/i.test(r.textContent); }).length;
         if (sem) f.push('<b>' + sem + ' cidade' + (sem > 1 ? 's' : '') + '</b> em “Sem informação”.');
@@ -458,8 +508,8 @@
     if ((fer === 'tempo-severo' || fer === 'chuva') && m.tipo === 'PNG') {
       var tend = fer === 'chuva' && (document.querySelector('#tabTend[aria-selected=true], #tabTend.active, #tabTend.on') || /tend/i.test(String(window.product || '')));
       var base = tend ? valor('trendDate2') : valor('forecastDate'), vu = valor('validUntil');
-      if (base && vu && vu.slice(0, 16) !== maisUmDia(base) + 'T10:00')
-        f.push('Válido até: <b>' + esc(br(vu.slice(0, 10)) + ' ' + vu.slice(11, 16)) + '</b> (padrão: 10h do dia ' + esc(br(maisUmDia(base))) + (tend ? ', dia seguinte ao 2º dia' : '') + ').');
+      if (base && vu && vu.slice(0, 16) !== maisUmDia(base) + 'T09:00')
+        f.push('Válido até: <b>' + esc(br(vu.slice(0, 10)) + ' ' + vu.slice(11, 16)) + '</b> (padrão: 09h do dia ' + esc(br(maisUmDia(base))) + (tend ? ', dia seguinte ao 2º dia' : '') + ').');
     }
     if (fer === 'reservatorios' && document.querySelector('#cpcVersao .warn')) f.push('Imagens do CPC com <b>mais de 36 h</b>. Confira o ciclo e busque de novo.');
     return f;
@@ -616,6 +666,13 @@
     t.src = (window.BASE_DADOS || '../') + 'assets/tutorial.js?v=' + VER;
     document.head.appendChild(t);
   }
+  // cabeçalho padrão (uma linha, Planner e Sugestões no fim) — assets/cabecalho.js (09/11/2026)
+  function carregarCabecalho() {
+    if (window.__cabecalhoPadrao || document.getElementById('cabScript')) return;
+    var t = document.createElement('script'); t.id = 'cabScript';
+    t.src = (window.BASE_DADOS || '../') + 'assets/cabecalho.js?v=' + VER;
+    document.head.appendChild(t);
+  }
   // faixa "versão de testes": só no painel de testes do Patrick (e no computador de quem desenvolve)
   function ehTeste() { return /^(patrickaguilar-pixel\.github\.io|localhost|127\.0\.0\.1)$/.test(location.hostname); }
   // alerta vermelho ao salvar no painel de testes: lembra que não é a plataforma oficial
@@ -643,6 +700,8 @@
   function iniciar() {
     faixaTeste();
     carregarTutorial();
+    carregarCabecalho();
+    botaoPrevia(); [1500, 4000].forEach(function (t) { setTimeout(botaoPrevia, t); });
     esconderBotoes();
     padronizarNavegador();
     [1500, 4000, 9000].forEach(function (t) { setTimeout(padronizarNavegador, t); });   // Alertas termina de iniciar depois

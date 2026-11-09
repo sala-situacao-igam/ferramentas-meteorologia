@@ -18,7 +18,8 @@
  *          cidades:[{nome, lon, lat}], municipios:false, fundo:'osm'|'osmfr'|'osmde'|'ofm'|'',
  *          (cada cidade pode ter posicao:'acima'|'direita'; sem ela, o nome fica abaixo, como na Previsão)
  *          pontos:[{lon, lat, rotulo, cor, lado:'esquerda'|'acima'}] (opcional: ponto com rótulo ao lado, ex.: reservatórios),
- *          textoValidade:'texto livre no lugar da validade' (opcional) }
+ *          textoValidade:'texto livre no lugar da validade' (opcional),
+ *          isolinhas:[{linhas:[[[lon,lat],…]], stroke, width, opacity}], rotulosIso:[{lon, lat, texto, tamanho, cor, angulo (graus, opcional), halo (false = sem contorno branco), opacidade}] (opcional; Umidade Mínima) }
  *   Sem op.fundo, vale a escolha do seletor "Mapa de fundo" que este arquivo coloca ao lado do botão
  *   "Prévia do mapa" (lembrada neste navegador).
  */
@@ -51,7 +52,10 @@
   var LOGO_SLOTS = ['igam', 'simge', 'appa', 'riodoce'];
   var LOGO_Y = 196.35, LOGO_H = 10, LOGO_X0 = 10.5, LOGO_X1 = 196.4;
   var PT_R = 0.65, NOME_TAM = 3.5;                  // ponto da sede com metade do tamanho anterior (igual à Previsão)
-  var COL = 258.49, LIN_W = 51.28;                   // eixo e largura das linhas da coluna da legenda (iguais à Previsão 1.15)
+  // 06/11/2026: legenda numa coluna própria, separada do mapa (mesmo layout da Previsão diária, modelo B)
+  var MAP_VIS_W = 229.4 - 6.86137;                                       // largura visível da moldura do mapa
+  var LEG = { x: 231.4, y: 19.8108, w: 294.74037 - 231.4, h: 168 };      // coluna da legenda (mesmo topo e base do mapa)
+  var COL = LEG.x + LEG.w / 2, LIN_W = LEG.w - 10, LEG_MAXW = LEG.w - 7;  // eixo, linhas azuis (5 mm de margem) e largura dos textos
   var MG_FILL = '#ecf4f5';                           // Minas sem mapa base: o mesmo tom claro da Previsão                    // marcação das cidades: a mesma da Previsão
   var STATE_LABELS = [['MT', -51.18, -14.494], ['GO', -49.744, -16.279], ['DF', -47.797, -15.7755], ['BA', -40.865, -14.794], ['MS', -51.2, -20.1],
     ['SP', -48.785, -21.709], ['RJ', -42.536, -22.359], ['ES', -40.361, -19.342]];
@@ -103,10 +107,16 @@
     return d + '°' + String(m).padStart(2, '0') + "'" + String(s).padStart(2, '0') + '"' + h;
   }
   function fmtDateBR(iso) { return iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : ''; }
+  // 06/11/2026: "VÁLIDO: 09h 05/11 às 09h 06/11, hora local" em todos os mapas (antes: BRT) — início = v.inicio (data da previsão ou 1º dia da tendência),
+  // ou o dia anterior ao fim; a hora do início é a mesma do fim.
+  function ddmmBR(iso) { var p = String(iso).slice(0, 10).split('-'); return p[2] + '/' + p[1]; }
+  function diaAntes(iso) { var d = new Date(String(iso).slice(0, 10) + 'T12:00:00'); d.setDate(d.getDate() - 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function validadeTexto(v) {
     if (!v || !v.date || !v.time) return '';
-    var p = v.time.split(':');
-    return 'Válido até às ' + (+p[0]) + 'h' + (p[1] && p[1] !== '00' ? p[1] : '') + ' do dia ' + fmtDateBR(v.date);
+    var p = v.time.split(':'), h = String(+p[0]).padStart(2, '0') + 'h' + (p[1] && p[1] !== '00' ? p[1] : '');
+    var ini = v.inicio && String(v.inicio).slice(0, 10) < String(v.date).slice(0, 10) ? v.inicio : diaAntes(v.date);
+    return 'VÁLIDO: ' + h + ' ' + ddmmBR(ini) + ' às ' + h + ' ' + ddmmBR(v.date) + ', hora local';   // 06/11/2026: padrão único em todos os mapas
   }
   function logoLayout() {
     var GAP = 6.5, avail = LOGO_X1 - LOGO_X0, H = 12.5;
@@ -312,7 +322,7 @@
     var fid = op.fundo != null ? op.fundo : fundoEscolhido(), F = op._fundo !== undefined ? op._fundo : fundoPorId(fid);
     if (F && !F.src) F = null;
     o.push('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="' + PAGE.w + 'mm" height="' + PAGE.h + 'mm" viewBox="0 0 ' + PAGE.w + ' ' + PAGE.h + '">');
-    o.push('<defs><clipPath id="mapclip"><rect x="0" y="0" width="' + MAP.w + '" height="' + MAP.h + '"/></clipPath>' +
+    o.push('<defs><clipPath id="mapclip"><rect x="0" y="0" width="' + f2(MAP_VIS_W) + '" height="' + MAP.h + '"/></clipPath>' +
       '<clipPath id="mgclip"><path d="' + GEO.mg + '" clip-rule="evenodd"/></clipPath></defs>');
     o.push('<rect width="' + PAGE.w + '" height="' + PAGE.h + '" fill="#f7fcff"/>');
 
@@ -341,7 +351,25 @@
       var d = caminho(a.geometry); if (!d) return;
       o.push('<path d="' + d + '" fill="' + a.fill + '"' + (a.opacity != null ? ' fill-opacity="' + a.opacity + '"' : '') + ' fill-rule="evenodd" stroke="' + (a.stroke || a.fill) + '" stroke-width="' + (a.strokeWidth || 0.2) + '" stroke-linejoin="round"/>');
     });
+    // isolinhas (opcional; Umidade Mínima): op.isolinhas = [{linhas:[[[lon,lat],…],…], stroke, width, opacity}]
+    // e op.rotulosIso = [{lon, lat, texto}]. Também recortadas em MG. Sem essas opções, nada muda no desenho.
+    (op.isolinhas || []).forEach(function (iso) {
+      var d = (iso.linhas || []).map(function (ln) {
+        return ln.map(function (c, i) { return (i ? 'L' : 'M') + f2((c[0] - MAP.xmin) * K) + ' ' + f2((MAP.ymax - c[1]) * K); }).join('');
+      }).join('');
+      if (d) o.push('<path d="' + d + '" fill="none" stroke="' + (iso.stroke || '#fff') + '" stroke-width="' + (iso.width || 0.2) + '"' + (iso.opacity != null ? ' stroke-opacity="' + iso.opacity + '"' : '') + ' stroke-linejoin="round" stroke-linecap="round"/>');
+    });
+    (op.rotulosIso || []).forEach(function (r) {
+      var p = proj(r.lon, r.lat), rs = r.tamanho || 2.6, rx = f2(p[0] - MAP.x), ry = p[1] - MAP.y;
+      o.push('<text x="' + rx + '" y="' + f2(ry + (ASC - DESC) / 2 * rs) + '"' + (r.angulo ? ' transform="rotate(' + r.angulo + ' ' + rx + ' ' + f2(ry) + ')"' : '') + ' font-family="' + FONT + '" font-size="' + rs + '" fill="' + (r.cor || '#4d4d4d') + '"' + (r.opacidade != null ? ' fill-opacity="' + r.opacidade + '"' : '') + ' text-anchor="middle"' + (r.halo === false ? '' : ' stroke="#fff" stroke-width="' + f2(rs * 0.3) + '" stroke-linejoin="round" paint-order="stroke"') + '>' + esc(r.texto) + '</text>');
+    });
     o.push('</g>');
+    // contorno de lagos (opcional; Reservatórios): op.lagos = [{geometry}] — só o contorno, para a cor da chuva continuar visível
+    (op.lagos || []).forEach(function (l) {
+      var d = caminho(l.geometry); if (!d) return;
+      o.push('<path d="' + d + '" fill="none" fill-rule="evenodd" stroke="#ffffff" stroke-width="0.5" stroke-linejoin="round"/>');
+      o.push('<path d="' + d + '" fill="none" fill-rule="evenodd" stroke="' + (l.stroke || '#c0392b') + '" stroke-width="0.22" stroke-linejoin="round"/>');
+    });
     if (op.municipios) o.push('<path d="' + GEO.munLines + '" fill="none" stroke="#c9d6dc" stroke-width="0.09" stroke-linejoin="round"/>');
     o.push('<path d="' + GEO.mesoLines + '" fill="none" stroke="#000" stroke-width="0.5" stroke-linejoin="round"/>');
     o.push('<path d="' + GEO.mg + '" fill="none" stroke="#000" stroke-width="0.6" stroke-linejoin="round"/>');
@@ -376,8 +404,10 @@
       if (pt.rotulo) o.push('<text x="' + f2(lx) + '" y="' + f2(ly) + '" font-family="' + FONT + '" font-size="' + rs + '" font-weight="700" fill="#000" text-anchor="' + la + '" stroke="#fff" stroke-width="' + f2(rs * 0.3) + '" stroke-linejoin="round" paint-order="stroke">' + esc(pt.rotulo) + '</text>');
     });
     o.push('</g>');
-    o.push('<rect width="' + MAP.w + '" height="' + MAP.h + '" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>');
+    o.push('<rect width="' + f2(MAP_VIS_W) + '" height="' + MAP.h + '" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>');
     o.push('</g>');
+    // coluna da legenda: quadro branco com o mesmo contorno da moldura do mapa
+    o.push('<rect x="' + f2(LEG.x) + '" y="' + f2(LEG.y) + '" width="' + f2(LEG.w) + '" height="' + f2(LEG.h) + '" fill="#ffffff" stroke="rgb(86,123,154)" stroke-width="0.307666"/>');
     // grade (1,5°, fora da moldura: esquerda e base)
     var gs = 8.43053 * PT, gc = 'rgb(39,71,129)', lat, lon;
     for (lat = Math.ceil(MAP.ymin / 1.5) * 1.5; lat <= MAP.ymax; lat += 1.5) {
@@ -386,7 +416,7 @@
     }
     for (lon = Math.ceil(MAP.xmin / 1.5) * 1.5; lon <= MAP.xmax; lon += 1.5) {
       var px = proj(lon, MAP.ymin)[0], lbl = dms(lon, 'E', 'W');
-      if (px + textW(lbl, gs) / 2 > PAGE.w - 0.5) continue;
+      if (px + textW(lbl, gs) / 2 > MAP.x + MAP_VIS_W - 0.3) continue;
       o.push('<text x="' + f2(px) + '" y="' + f2(MAP.y + MAP.h + 2.46133 + ASC * gs) + '" font-family="' + FONT + '" font-size="' + f2(gs) + '" fill="' + gc + '" text-anchor="middle">' + lbl + '</text>');
     }
     // seta norte e escala gráfica
@@ -399,13 +429,19 @@
       o.push('<text x="' + f2(bx + 2 * seg + textW('100', ss) / 2 + 1) + '" y="' + f2(ly) + '" font-family="' + FONT + '" font-size="' + f2(ss) + '" fill="#000">km</text>');
     })();
 
-    /* ---- legenda (mesma área e título da Previsão; chave de cor no lugar do ícone) ---- */
-    o.push(textBlock({ lines: ['Legenda'], x: COL, yTop: 22.7706, h: 6.78946, size: 16 * PT, weight: 700, fill: navy, anchor: 'middle' }));
-    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="34.1727" width="' + LIN_W + '" height="0.266644" fill="rgb(138,187,228)"/>');
+    /* ---- legenda (coluna própria, como na Previsão; chave de cor no lugar do ícone) ---- */
+    // parte de baixo da coluna (de baixo para cima): créditos, linha, validade, linha
+    var cred = [op.credito || 'SIMGE/IGAM'].concat(CREDITOS_FIXOS);
+    if (F) cred.push('Mapa base: ' + F.credito);   // mesmo formato de crédito da Previsão
+    var credSize = Math.min(fitSize(cred, 6.68628 * PT, LEG_MAXW, 400), 20 / (Math.max(1, cred.length) * LH));
+    var credH = cred.length * credSize * LH, credTop = LEG.y + LEG.h - 2.6 - credH;
+    var linVal2 = credTop - 2.2, linVal1 = linVal2 - 9.2;
+    o.push(textBlock({ lines: ['Legenda'], x: COL, yTop: LEG.y + 2.4, h: 6.78946, size: 16 * PT, weight: 700, fill: navy, anchor: 'middle' }));
+    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="' + f2(LEG.y + 11.2) + '" width="' + f2(LIN_W) + '" height="0.266644" fill="rgb(138,187,228)"/>');
     (function () {
       var itens = op.legenda || [];
       if (!itens.length) return;
-      var top = 36.6, bottom = 157.8, cx = COL, maxW = 61.5;
+      var top = LEG.y + 13.2, bottom = linVal1 - 1.6, cx = COL, maxW = LEG_MAXW;
       var rh = Math.min(10, (bottom - top) / itens.length);
       var sw = 9, sh = Math.min(6, rh - 1.6), gap = 2.6;
       var labels = itens.map(function (i) { return i.label; });
@@ -429,13 +465,15 @@
         y += rh;
       });
     })();
-    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="159.499" width="' + LIN_W + '" height="0.256388" fill="rgb(138,187,228)"/>');
+    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="' + f2(linVal1) + '" width="' + f2(LIN_W) + '" height="0.256388" fill="rgb(138,187,228)"/>');
     var vt = op.textoValidade || validadeTexto(op.validade), val = vt || 'Validade não informada';
-    o.push(textBlock({ lines: [val], x: COL, yTop: 160.906, h: 8.28892, size: fitSize([val], 10 * PT, 67.7, 400), fill: vt ? navy : '#8a97a8', anchor: 'middle' }));
-    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="170.345" width="' + LIN_W + '" height="0.256388" fill="rgb(138,187,228)"/>');
-    var cred = [op.credito || 'SIMGE/IGAM'].concat(CREDITOS_FIXOS);
-    if (F) cred.push('Mapa base: ' + F.credito);   // mesmo formato de crédito da Previsão
-    o.push(textBlock({ lines: cred, x: COL, yTop: 172.909, h: 13.3322, size: Math.min(fitSize(cred, 6.68628 * PT, 62, 400), 13.3322 / (cred.length * LH)), fill: navy, anchor: 'middle' }));
+    (function () {   // em uma linha; se o texto for longo (ex.: Alertas), quebra em duas para não ficar miúdo
+      var vh = linVal2 - linVal1 - 0.25, vs = fitSize([val], 11 * PT, LEG.w - 4, 400), vl = [val];
+      if (vs < 8.5 * PT) { var w = wrapFit(val, LEG.w - 4, vh - 0.6, 10 * PT, 6 * PT, 400); vl = w.lines; vs = w.size; }
+      o.push(textBlock({ lines: vl, x: COL, yTop: linVal1 + 0.25, h: vh, size: vs, fill: vt ? navy : '#8a97a8', anchor: 'middle' }));
+    })();
+    o.push('<rect x="' + f2(COL - LIN_W / 2) + '" y="' + f2(linVal2) + '" width="' + f2(LIN_W) + '" height="0.256388" fill="rgb(138,187,228)"/>');
+    o.push(textBlock({ lines: cred, x: COL, yTop: credTop, h: credH, size: credSize, fill: navy, anchor: 'middle' }));
 
     /* ---- rodapé ---- */
     [[4.30732, 194.2, 289.001, 14.3, 3.28177], [4.51243, 194.4, 288.59, 13.9, 3.07666], [4.71754, 194.6, 288.18, 13.5, 2.87155]]

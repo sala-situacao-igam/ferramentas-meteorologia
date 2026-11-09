@@ -20,7 +20,12 @@ if (typeof GEO !== "undefined" && GEO.__dy == null){
   GEO.__dy = GEO_DY;
 }
 const PT = 25.4/72; // mm por ponto tipográfico
-const COL = 258.49, LIN_W = 51.28;   // eixo e largura das linhas da coluna da legenda (tudo alinhado no mesmo centro)
+// 05/11/2026 (modelo B): a moldura do mapa termina em x = 229,4 mm e a legenda ganha uma coluna própria ao lado,
+// com a mesma altura da moldura do mapa. Nada do mapa passa por baixo da legenda. A projeção (MAP.w) não muda.
+const MAP_VIS_W = 229.4 - 6.86137;                         // largura visível da moldura do mapa
+const LEG = {x: 231.4, y: 19.8108, w: 294.74037 - 231.4, h: 168};   // coluna da legenda (mesmo topo e base do mapa)
+const COL = LEG.x + LEG.w/2, LIN_W = LEG.w - 10;           // eixo da coluna e largura das linhas azuis (5 mm de margem)
+const LEG_MAXW = LEG.w - 7;                                // largura máxima dos textos dentro da coluna
 const NAVY = "#092b6a";
 const FONT = "Arial, 'Liberation Sans', Helvetica, sans-serif";
 const CAT = Object.fromEntries(ICONS.map(c => [c.value, c]));
@@ -143,16 +148,18 @@ function makeRow(name){
 }
 function todayISO(){ const d = new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
 function defaultState(){
-  return {date: todayISO(), val:{time:"10:00", date:addDays(todayISO(),1), auto:true}, rows: START_MUN.map(makeRow), texts: {...DEFAULT_TEXTS},
+  return {date: todayISO(), val:{time:"09:00", date:addDays(todayISO(),1), auto:true}, rows: START_MUN.map(makeRow), texts: {...DEFAULT_TEXTS},
     opts:{mun:true, meso:true, mesoNames:false, states:true, names:true, ptSede:true, autoSpread:true, temps:"both", iconScale:0.5, nameSize:3.5, mgFill:true, baseFill:true, baseHidro:true, baseRod:true, baseUrb:true, bgClipMG:true}, bgActive:null, baseVersion:BASE_VERSION, namesDefaultV:2, noticeDismissed:true, savedSig:null};
 }
 function addDays(iso, n){ if (!iso) return ""; const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate()+n);
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
-// "Válido até às 10h do dia 02/10/2026" — texto fixo; só hora e data mudam
-function validityText(v = S.val){
+// 06/11/2026: "VÁLIDO: 09h 05/11 às 09h 06/11, hora local" no mapa e no PDF — início = data da previsão (ou o dia anterior ao fim), mesma hora do fim
+function validityText(v = S.val, horaLocal = false){
   if (!v || !v.date || !v.time) return "";
-  const [h, m] = v.time.split(":");
-  return `Válido até às ${+h}h${m && m !== "00" ? m : ""} do dia ${fmtDateBR(v.date)}`;
+  const [h, m] = v.time.split(":"), hh = String(+h).padStart(2, "0") + "h" + (m && m !== "00" ? m : "");
+  const dm = iso => { const [, mm, dd] = String(iso).slice(0, 10).split("-"); return `${dd}/${mm}`; };
+  const ini = S.date && S.date < v.date ? S.date : addDays(v.date, -1);
+  return `VÁLIDO: ${hh} ${dm(ini)} às ${hh} ${dm(v.date)}` + ", hora local";   // 06/11/2026: sempre ", hora local" (mapa, PDF e tela)
 }
 function parseValidity(t){
   const m = /(\d{1,2})\s*(?:h|:)\s*(\d{2})?[^\d]*(\d{2})\/(\d{2})\/(\d{4})/.exec(t || "");
@@ -171,7 +178,8 @@ if (!Array.isArray(S.bul.blocks) || S.bul.v !== 2){ const velho = S.bul, novo = 
   S.bul = novo; }
 S.bul.blocks.forEach(b => { if (b.tipo !== "texto" && !Array.isArray(b.paras)) b.paras = []; if (b.mapa && typeof b.mapa !== "object") b.mapa = {auto:false}; });
 S.opts = {...defaultState().opts, ...(S.opts||{})};
-if (!S.val) S.val = parseValidity(S.validity) || {time:"10:00", date:addDays(S.date,1), auto:true};
+if (!S.val) S.val = parseValidity(S.validity) || {time:"09:00", date:addDays(S.date,1), auto:true};
+if (S.val && S.val.auto && S.val.time === "10:00") S.val.time = "09:00";   // 05/11/2026: padrão passou de 10h para 09h
 delete S.validity;
 // troca a lista antiga pelos municípios base, mantendo o que já estava preenchido nos que continuam
 if (S.namesDefaultV !== 2){ S.opts.names = true; S.namesDefaultV = 2;
@@ -802,7 +810,7 @@ function renderSVG({forExport=false} = {}){
   const o = [];
   const navy = NAVY;
   o.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${PAGE.w}mm" height="${PAGE.h}mm" viewBox="0 0 ${PAGE.w} ${PAGE.h}">`);
-  o.push(`<defs><clipPath id="mapclip"><rect x="0" y="0" width="${MAP.w}" height="${MAP.h}"/></clipPath></defs>`);
+  o.push(`<defs><clipPath id="mapclip"><rect x="0" y="0" width="${f2(MAP_VIS_W)}" height="${MAP.h}"/></clipPath></defs>`);
   o.push(`<rect width="${PAGE.w}" height="${PAGE.h}" fill="#f7fcff"/>`);
 
   /* ---- cabeçalho ---- */
@@ -882,8 +890,10 @@ function renderSVG({forExport=false} = {}){
   }
   o.push(...L_LINE, ...L_ICON, ...L_PT, ...L_NAME, ...L_TEMP);   // ícone, ponto da sede, nome e, por cima, as temperaturas
   o.push(`</g>`);
-  o.push(`<rect width="${MAP.w}" height="${MAP.h}" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>`);
+  o.push(`<rect width="${f2(MAP_VIS_W)}" height="${MAP.h}" fill="none" stroke="rgb(86,123,154)" stroke-width="0.307666"/>`);
   o.push(`</g>`);
+  // coluna da legenda: quadro branco com o mesmo contorno da moldura do mapa
+  o.push(`<rect x="${f2(LEG.x)}" y="${f2(LEG.y)}" width="${f2(LEG.w)}" height="${f2(LEG.h)}" fill="#ffffff" stroke="rgb(86,123,154)" stroke-width="0.307666"/>`);
   // anotações da grade (1,5°, GMS, fora da moldura: esquerda e base)
   const gs = 8.43053*PT, gc = "rgb(39,71,129)";
   for (let lat = Math.ceil(MAP.ymin/1.5)*1.5; lat <= MAP.ymax; lat += 1.5){
@@ -892,7 +902,7 @@ function renderSVG({forExport=false} = {}){
   }
   for (let lon = Math.ceil(MAP.xmin/1.5)*1.5; lon <= MAP.xmax; lon += 1.5){
     const [x] = proj(lon, MAP.ymin);
-    const lbl = dms(lon,"E","W"); if (x + textW(lbl, gs)/2 > PAGE.w - 0.5) continue;
+    const lbl = dms(lon,"E","W"); if (x + textW(lbl, gs)/2 > MAP.x + MAP_VIS_W - 0.3) continue;
     o.push(`<text x="${f2(x)}" y="${f2(MAP.y+MAP.h+2.46133+ASC*gs)}" font-family="${FONT}" font-size="${f2(gs)}" fill="${gc}" text-anchor="middle">${lbl}</text>`);
   }
   // seta norte
@@ -905,11 +915,26 @@ function renderSVG({forExport=false} = {}){
     o.push(`<text x="${f2(bx+2*seg+textW("100",ss)/2+1)}" y="${f2(ly)}" font-family="${FONT}" font-size="${f2(ss)}" fill="#000">km</text>`); }
 
   /* ---- legenda ---- */
-  o.push(textBlock({lines:["Legenda"], x:COL, yTop:22.7706, h:6.78946, size:16*PT, weight:700, fill:navy, anchor:"middle"}));
-  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="34.1727" width="${LIN_W}" height="0.266644" fill="rgb(138,187,228)"/>`);
+  // parte de baixo da coluna (de baixo para cima): créditos, linha, validade, linha
+  const year = (S.date || todayISO()).slice(0,4);
+  let cred = (S.texts.credits || "").replace(/\{ano\}/g, year).split("\n")
+    .map(l => baseOn() && /^\s*Base cartográfica\s*:/i.test(l) ? `Base cartográfica: ${BASE.credito}` : l);
+  { const ab = activeBg();
+    if (ab && ab.src && ab.credito){
+      const i = cred.findIndex(l => /^\s*(Basemap|Mapa base|Fundo)\s*:/i.test(l));
+      if (i >= 0) cred[i] = `Mapa base: ${ab.credito}`;
+      else { const j = cred.findIndex(l => /^\s*Base cartográfica\s*:/i.test(l)); cred.splice(j >= 0 ? j + 1 : cred.length, 0, `Mapa base: ${ab.credito}`); }
+    } }
+  const credSize = Math.min(fitSize(cred, 6.68628*PT, LEG_MAXW, 400), 20/(Math.max(1, cred.length)*LH));
+  const credH = cred.length*credSize*LH, credTop = LEG.y + LEG.h - 2.6 - credH;
+  const linVal2 = credTop - 2.2, linVal1 = linVal2 - 9.2;
+  const vt = validityText(S.val, true), val = vt || "Validade não informada";   // 05/11/2026: mapa também com ", hora local"
+
+  o.push(textBlock({lines:["Legenda"], x:COL, yTop:LEG.y + 2.4, h:6.78946, size:16*PT, weight:700, fill:navy, anchor:"middle"}));
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="${f2(LEG.y + 11.2)}" width="${f2(LIN_W)}" height="0.266644" fill="rgb(138,187,228)"/>`);
   { const cats = usedCats();
     // área da legenda: entre a linha abaixo do título e a linha da validade, centrada sob "Legenda"
-    const top = 36.6, bottom = 157.8, cx = COL, maxW = 61.5;
+    const top = LEG.y + 13.2, bottom = linVal1 - 1.6, cx = COL, maxW = LEG_MAXW;
     const KEYF = 0.62, KEYGAP = 1.6;                 // linhas da chave de temperatura são mais baixas
     const KEYS = [];   // a legenda mostra só as condições do tempo (sem a chave de máxima/mínima)
     const units = Math.max(1, cats.length + KEYS.length*KEYF);
@@ -938,20 +963,10 @@ function renderSVG({forExport=false} = {}){
       y += h;
     });
   }
-  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="159.499" width="${LIN_W}" height="0.256388" fill="rgb(138,187,228)"/>`);
-  const vt = validityText(), val = vt || "Validade não informada";
-  o.push(textBlock({lines:[val], x:COL, yTop:160.906, h:8.28892, size:fitSize([val],10*PT,67.7,400), fill: vt ? navy : "#8a97a8", anchor:"middle"}));
-  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="170.345" width="${LIN_W}" height="0.256388" fill="rgb(138,187,228)"/>`);
-  const year = (S.date || todayISO()).slice(0,4);
-  let cred = (S.texts.credits || "").replace(/\{ano\}/g, year).split("\n")
-    .map(l => baseOn() && /^\s*Base cartográfica\s*:/i.test(l) ? `Base cartográfica: ${BASE.credito}` : l);
-  { const ab = activeBg();
-    if (ab && ab.src && ab.credito){
-      const i = cred.findIndex(l => /^\s*(Basemap|Mapa base|Fundo)\s*:/i.test(l));
-      if (i >= 0) cred[i] = `Mapa base: ${ab.credito}`;
-      else { const j = cred.findIndex(l => /^\s*Base cartográfica\s*:/i.test(l)); cred.splice(j >= 0 ? j + 1 : cred.length, 0, `Mapa base: ${ab.credito}`); }
-    } }
-  o.push(textBlock({lines:cred, x:COL, yTop:172.909, h:13.3322, size:Math.min(fitSize(cred,6.68628*PT,62,400),13.3322/(cred.length*LH)), fill:navy, anchor:"middle"}));
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="${f2(linVal1)}" width="${f2(LIN_W)}" height="0.256388" fill="rgb(138,187,228)"/>`);
+  o.push(textBlock({lines:[val], x:COL, yTop:linVal1 + 0.25, h:linVal2 - linVal1 - 0.25, size:fitSize([val],11*PT,LEG.w-4,400), fill: vt ? navy : "#8a97a8", anchor:"middle"}));
+  o.push(`<rect x="${f2(COL-LIN_W/2)}" y="${f2(linVal2)}" width="${f2(LIN_W)}" height="0.256388" fill="rgb(138,187,228)"/>`);
+  o.push(textBlock({lines:cred, x:COL, yTop:credTop, h:credH, size:credSize, fill:navy, anchor:"middle"}));
 
   /* ---- rodapé ---- */
   [[4.30732,194.2,289.001,14.3,3.28177],[4.51243,194.4,288.59,13.9,3.07666],[4.71754,194.6,288.18,13.5,2.87155]]
@@ -1137,7 +1152,7 @@ $("#btnApply").addEventListener("click", () => {
 });
 $("#btnClear").addEventListener("click", () => {
   const snap = JSON.stringify({rows:S.rows, val:S.val});
-  S.rows.forEach(r => { r.tempo = NONE; r.tmax = ""; r.tmin = ""; }); S.val = {time:"10:00", date:addDays(S.date,1), auto:true}; fillVal();
+  S.rows.forEach(r => { r.tempo = NONE; r.tmax = ""; r.tmin = ""; }); S.val = {time:"09:00", date:addDays(S.date,1), auto:true}; fillVal();
   persist(); renderRows(); drawPreview();
   showMsg("info", `Preenchimento limpo. <button class="btn small ghost" id="undoClr" type="button">Desfazer</button>`);
   $("#undoClr")?.addEventListener("click", () => { const o = JSON.parse(snap); S.rows = o.rows; S.val = o.val; fillVal(); persist(); renderRows(); drawPreview(); hideMsg(); });
@@ -1528,7 +1543,7 @@ $("#btnSave").addEventListener("click", () => {
 });
 function applyData(o){
   if (o.date) S.date = o.date;
-  S.val = o.val || parseValidity(o.validity) || {time:"10:00", date:addDays(S.date,1), auto:true};
+  S.val = o.val || parseValidity(o.validity) || {time:"09:00", date:addDays(S.date,1), auto:true}; if (S.val.auto && S.val.time === "10:00") S.val.time = "09:00";
   if (Array.isArray(o.rows)){
     S.rows = o.rows.filter(r => r && MUN.has(r.name)).map(r => ({...makeRow(r.name), ...r, id:"r"+(++uid), tempo: CAT[r.tempo] ? r.tempo : NONE, tmax: r.tmax==null ? "" : String(r.tmax), tmin: r.tmin==null ? "" : String(r.tmin)}));
   }
@@ -1657,7 +1672,7 @@ function bulDate(){ return S.bul.dateAuto ? longDate(S.date).toUpperCase() : S.b
 function bulVal(){
   if (!S.bul.valAuto) return S.bul.valText;
   const v = S.val; if (!v || !v.time || !v.date) return "";
-  return `Período de Vigência: ${v.time.replace(":", "h")} LT do dia ${ddmm(v.date)}`;
+  return validityText(v, true);   // 06/11/2026: "VÁLIDO: 09h 05/11 às 09h 06/11, hora local" (mapa e PDF)
 }
 function joinPt(list){ return list.length < 2 ? (list[0] || "") : list.slice(0,-1).join(", ") + " e " + list[list.length-1]; }
 const cidadesTxt = () => joinPt(S.rows.map(r => r.name).sort((a,b) => a.localeCompare(b, "pt-BR", {sensitivity:"base"})));
@@ -1674,7 +1689,7 @@ function novoMapa(modelo){
   const b = {id:bid(), tipo:"mapa", titulo:"", sub:"", novaPagina:true, mapa:{auto:false}, paras:[""], obs:OBS_CIDADES};
   if (modelo === "tendencia"){
     b.titulo = `TENDÊNCIA – ${ddmm(d1)} e ${ddmm(d2)}`;
-    b.sub = `Válida até às 10:00hrs LT do dia ${fmtDateBR(d3)}.`;
+    b.sub = `VÁLIDO: 09h ${ddmm(d1)} às 09h ${ddmm(d3)}, hora local`;
     b.paras = ["A tendência é de aumento da instabilidade atmosférica sobre Minas Gerais. Favor acompanhar as próximas atualizações da previsão do tempo."];
     b.mapa = {auto:true, prefixo:PREFIXO.tendencia};
   } else if (modelo === "sabado" || modelo === "domingo"){
