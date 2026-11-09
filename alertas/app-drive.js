@@ -1,4 +1,6 @@
-/* Alertas e passagem de plantão — código da página (v4.4, 09/11/2026).
+/* Alertas e passagem de plantão — código da página (v4.5, 09/11/2026).
+   v4.5: botão "📋 Alertas para o site" (janela com os alertas emitidos no dia, prontos para o site, com "Copiar todos";
+         precisa do AlertasSite.gs no Apps Script).
    v4.4 (Patrick/Claude, sobre a v4.3 da equipe): (1) botão "✎ Editar" nos alertas próprios e vigentes (abre a janela
    preenchida; ao salvar, entra um alerta novo com "RETIFICAÇÃO" e o original é excluído pelo excluirAlerta);
    (2) mapa do relatório com municípios em amarelo forte e opaco (#ffc107) e contorno escuro;
@@ -2450,6 +2452,139 @@ function avisoIntercorrencias(r,d){
     .registrarIntercorrencias(r.id,d);
   aviso('A passagem foi salva, mas as intercorrências <b>não</b> foram gravadas na planilha ('+esc(r.avisoIntercorrencias)+').',true,[['Tentar de novo',tentar]]);
 }
+
+/* ---------------- v4.5: Alertas para o site ----------------
+   Botão ao lado de "Alertas do dia (.txt)". Abre uma janela com todos os alertas EMITIDOS no dia escolhido
+   (toda a equipe, pelo alertasParaSite() do AlertasSite.gs), do mais recente para o mais antigo, já no texto
+   do site: até a duração em negrito, depois cidades e "FONTE: SIMGE/IGAM". "Copiar todos" copia com o negrito. */
+const FONTE_SITE='FONTE: SIMGE/IGAM';
+function textoSite(a){
+  let t=String(a.mensagem||'').replace(/^'+/,'').replace(/\s+/g,' ').trim();
+  t=t.replace(/^(?:(?:RETIFICA[ÇC][ÃA]O|RENOVA[ÇC][ÃA]O)\s*[—–:-]?\s*)+/i,'');   // no site sai só o texto padrão
+  if(!t){   // sem mensagem gravada: monta no padrão
+    const fen=String(a.fenomenos||'').split(/\s*,\s*/).filter(Boolean);
+    t='Alerta de '+(a.tipo||'Tempestade')+(fen.length?' com '+textList(fen):'')+' às '+(a.horario||'')+'h com duração de '+(a.duracao||'')+'h. Cidades: '+((a.cidades||[]).length?textList(a.cidades):'—')+'.';
+  }
+  if(!/FONTE\s*:/i.test(t))t=t.replace(/\s*$/,'')+' '+FONTE_SITE;
+  // negrito: até a duração + o rótulo "Cidades:" (como no site); nomes das cidades e a fonte ficam normais
+  const m=/^(.*?com dura[çc][ãa]o de [^.]*?h\.)\s*(?:Cidades\s*:\s*)?(.*)$/i.exec(t);
+  if(m)return {b:m[1].trim(),r:m[2].trim()};
+  const k=/^(.*?)\s*Cidades\s*:\s*(.*)$/i.exec(t);
+  return k?{b:k[1].trim(),r:k[2].trim()}:{b:'',r:t,sem:true};
+}
+function htmlSite(p){return '<p>'+(p.sem?esc(p.r):'<strong>'+esc(p.b)+(p.b?' ':'')+'Cidades:</strong> '+esc(p.r))+'</p>';}
+function txtSite(p){return p.sem?p.r:p.b+(p.b?' ':'')+'Cidades: '+p.r;}
+async function copiarSite(lista){
+  const html=lista.map(htmlSite).join(''),txt=lista.map(txtSite).join('\n\n');
+  try{
+    if(navigator.clipboard&&window.ClipboardItem){
+      await navigator.clipboard.write([new ClipboardItem({'text/html':new Blob([html],{type:'text/html'}),'text/plain':new Blob([txt],{type:'text/plain'})})]);
+      return 'ok';
+    }
+  }catch(e){}
+  try{   // plano B: seleciona um bloco formatado e copia (mantém o negrito)
+    const d=document.createElement('div');d.contentEditable='true';d.style.cssText='position:fixed;left:-9999px;top:0;white-space:normal';d.innerHTML=html;
+    document.body.appendChild(d);const r=document.createRange();r.selectNodeContents(d);const sel=getSelection();sel.removeAllRanges();sel.addRange(r);
+    const ok=document.execCommand('copy');sel.removeAllRanges();d.remove();if(ok)return 'ok';
+  }catch(e){}
+  try{await navigator.clipboard.writeText(txt);return 'texto';}catch(e){}
+  return '';
+}
+const siteUI={data:'',lista:[],carregando:false};
+function montarJanelaSite(){
+  if($('siteBack'))return;
+  const st=document.createElement('style');
+  st.textContent='#siteBack{position:fixed;inset:0;background:rgba(9,43,106,.35);display:none;align-items:center;justify-content:center;z-index:120}'+
+    '#siteBack .modal{width:min(860px,95vw);display:flex;flex-direction:column;gap:12px}'+
+    '#siteBack .topo{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}'+
+    '#siteBack .topo input{width:auto}'+
+    '#siteBack .cont{font-size:13px;color:var(--muted)}'+
+    '#siteLista{border:1px solid var(--line);border-radius:8px;max-height:58vh;overflow:auto;background:var(--card)}'+
+    '#siteLista .it{padding:10px 12px;border-bottom:1px solid var(--line-2);display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:start}'+
+    '#siteLista .it:last-child{border-bottom:0}'+
+    '#siteLista .meta{grid-column:1/-1;font-size:12px;color:var(--muted)}'+
+    '#siteLista p{margin:0;line-height:1.45}'+
+    '#siteLista .vazio{padding:16px;color:var(--muted)}'+
+    '#siteBack .rodape{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center}'+
+    '#siteBack .rodape .st{font-size:13px}';
+  document.head.appendChild(st);
+  const back=document.createElement('div');back.id='siteBack';back.className='modalback';
+  back.innerHTML='<div class="modal" role="dialog" aria-modal="true" aria-labelledby="siteTit">'+
+    '<h2 id="siteTit" style="margin:0">Alertas para o site</h2>'+
+    '<div class="topo"><label class="l" for="siteData" style="margin:0">Data de emissão</label>'+
+    '<input type="date" class="field" id="siteData">'+
+    '<button type="button" class="btn small" id="siteAnt" title="Dia anterior">◀</button>'+
+    '<button type="button" class="btn small" id="siteHoje">Hoje</button>'+
+    '<button type="button" class="btn small" id="sitePro" title="Dia seguinte">▶</button>'+
+    '<button type="button" class="btn small" id="siteAtual">↻ Atualizar</button>'+
+    '<span class="cont" id="siteCont"></span></div>'+
+    '<div id="siteLista" aria-live="polite"></div>'+
+    '<div class="rodape"><span class="st" id="siteSt"></span><span>'+
+    '<button type="button" class="btn" id="siteFechar">Fechar</button> '+
+    '<button type="button" class="btn primary" id="siteCopiar">📋 Copiar todos</button></span></div></div>';
+  document.body.appendChild(back);
+  back.addEventListener('click',e=>{if(e.target===back)fecharSite();});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&back.style.display==='flex')fecharSite();});
+  $('siteFechar').onclick=fecharSite;
+  $('siteData').onchange=()=>carregarSite($('siteData').value);
+  $('siteAtual').onclick=()=>carregarSite($('siteData').value);
+  $('siteHoje').onclick=()=>carregarSite(isoMG());
+  $('siteAnt').onclick=()=>carregarSite(maisDiasIso($('siteData').value||isoMG(),-1));
+  $('sitePro').onclick=()=>{const d=maisDiasIso($('siteData').value||isoMG(),1);if(d<=isoMG())carregarSite(d);};
+  $('siteCopiar').onclick=async()=>{
+    if(!siteUI.lista.length)return;
+    const r=await copiarSite(siteUI.lista.map(textoSite));
+    siteMsg(r==='ok'?'Copiado: '+siteUI.lista.length+' alerta(s), com o negrito. É só colar no site.':
+      r==='texto'?'Copiado só como texto (sem negrito): este navegador não deixou copiar a formatação.':
+      'Não foi possível copiar. Selecione o texto da lista com o mouse e use Ctrl+C.',r==='ok'?'ok':'erro');
+  };
+  $('siteLista').addEventListener('click',async e=>{
+    const b=e.target.closest('button[data-i]');if(!b)return;
+    const r=await copiarSite([textoSite(siteUI.lista[+b.dataset.i])]);
+    b.textContent=r?'Copiado!':'Falhou';setTimeout(()=>{b.textContent='Copiar';},1500);
+  });
+}
+function siteMsg(t,tipo){const el=$('siteSt');el.textContent=t||'';el.style.color=tipo==='erro'?'var(--err)':tipo==='ok'?'var(--ok)':'var(--muted)';}
+function abrirSite(){montarJanelaSite();$('siteBack').style.display='flex';carregarSite(siteUI.data||isoMG());$('siteCopiar').focus();}
+function fecharSite(){$('siteBack').style.display='none';}
+function desenharSite(){
+  const n=siteUI.lista.length,dBr=siteUI.data.split('-').reverse().join('/');
+  $('siteCont').textContent=siteUI.carregando?'Carregando…':n?n+' alerta(s) emitido(s) em '+dBr+', do mais recente para o mais antigo':'';
+  $('siteCopiar').disabled=!n||siteUI.carregando;
+  $('sitePro').disabled=siteUI.data>=isoMG();
+  $('siteLista').innerHTML=siteUI.carregando?'<div class="vazio">Buscando os alertas na planilha…</div>':
+    !n?'<div class="vazio">Nenhum alerta emitido em '+esc(dBr)+'.</div>':
+    siteUI.lista.map((a,i)=>'<div class="it"><div class="meta">Emitido às '+esc(a.emitidoEm||'')+(a.responsavel?' · '+esc(a.responsavel):'')+'</div>'+
+      htmlSite(textoSite(a))+'<button type="button" class="btn small" data-i="'+i+'">Copiar</button></div>').join('');
+}
+function carregarSite(data){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(data||''))data=isoMG();
+  siteUI.data=data;$('siteData').value=data;$('siteData').max=isoMG();siteMsg('');
+  if(!temFuncao('alertasParaSite')){   // plataforma de teste ou Apps Script sem o AlertasSite.gs: usa os alertas desta tela
+    siteUI.lista=(state.active||[]).filter(a=>String(a.id||'').indexOf('A'+data.replace(/-/g,'')+'-')===0||(!a.id&&data===isoMG()))
+      .map(a=>({id:a.id||'',emitidoEm:String(a.id||'').slice(10,12)+(a.id?':':'')+String(a.id||'').slice(12,14),horario:a.start,duracao:a.duration,
+        tipo:a.type,fenomenos:(a.phen||[]).join?a.phen.join(', '):a.phen,responsavel:a.owner,mensagem:a.message,cidades:a.cities||[]}))
+      .sort((x,y)=>String(y.id).localeCompare(String(x.id)));
+    siteUI.carregando=false;desenharSite();
+    if(temServidor)siteMsg('Mostrando só os alertas desta tela: falta instalar o AlertasSite.gs no Apps Script para ver os de toda a equipe.','erro');
+    return;
+  }
+  siteUI.carregando=true;siteUI.lista=[];desenharSite();
+  const pedido=data;
+  gsRun().withSuccessHandler(r=>{
+    if(pedido!==siteUI.data)return;   // a pessoa já trocou de data
+    siteUI.carregando=false;siteUI.lista=(r&&r.alertas)||[];desenharSite();
+  }).withFailureHandler(e=>{
+    if(pedido!==siteUI.data)return;
+    siteUI.carregando=false;siteUI.lista=[];desenharSite();siteMsg('Não foi possível ler os alertas na planilha: '+(e&&e.message||e),'erro');
+  }).alertasParaSite(data);
+}
+(function botaoSite(){
+  const ref=$('downloadTxt');if(!ref||$('alertasSite'))return;
+  const b=document.createElement('button');b.type='button';b.className=ref.className||'tool';b.id='alertasSite';b.textContent='📋 Alertas para o site';
+  b.title='Todos os alertas emitidos no dia, prontos para colar no site SIMGE';
+  b.onclick=abrirSite;ref.insertAdjacentElement('afterend',b);
+})();
 
 /* ---------------- início ---------------- */
 const temRascunho=carregarRascunho();
