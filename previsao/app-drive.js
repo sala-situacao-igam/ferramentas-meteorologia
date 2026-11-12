@@ -61,6 +61,7 @@ const BUL_DEFAULT = () => ({
 // 12/11/2026: Tendência (chuva) entra no boletim como mapa rotineiro, preenchido sozinho pelo Drive
 function TENDENCIA_ROTINA(){
   let d0 = ""; try { d0 = S && S.date; } catch(e){}   // S ainda pode não existir quando o modelo é montado
+  const ddmm = iso => { const [, m, d] = String(iso).split("-"); return `${d}/${m}`; };   // local: o ddmm global é declarado mais abaixo
   const t = d0 ? `TENDÊNCIA – ${ddmm(addDays(d0,1))} e ${ddmm(addDays(d0,2))}` : "TENDÊNCIA";
   const v = d0 ? `VÁLIDO: 09h ${ddmm(addDays(d0,1))} às 09h ${ddmm(addDays(d0,3))}, hora local` : "";
   return {id:"tendencia", tipo:"mapa", fixo:true, rotina:"tendencia", titulo:t, sub:v, novaPagina:true,
@@ -179,6 +180,7 @@ S.rows.forEach(r => { r.id = "r"+(++uid); });
 const migraCred = t => typeof t === "string" ? t.replace(/^[ \t]*Proje[çc][ãa]o:\s*Latitude\/Longitude\s*-\s*Datum\s*SIRGAS\s*2000[ \t]*$/gim, "Sistema de Coordenadas Geográficas\nSistema geodésico de referência: Sirgas2000") : t;
 S.texts = {...DEFAULT_TEXTS, ...(S.texts||{})};
 S.texts.credits = migraCred(S.texts.credits);  // créditos salvos antes de 29/10/2026
+const _rot1 = !!(S.bul && S.bul.rot1);   // boletim salvo antes da Tendência rotineira?
 S.bul = {...BUL_DEFAULT(), ...(S.bul||{})};
 // boletim antigo (PDF simples) -> boletim completo: os parágrafos antigos viram o texto do bloco de ícones
 if (!Array.isArray(S.bul.blocks) || S.bul.v !== 2){ const velho = S.bul, novo = BUL_DEFAULT();
@@ -187,7 +189,7 @@ if (!Array.isArray(S.bul.blocks) || S.bul.v !== 2){ const velho = S.bul, novo = 
 S.bul.blocks.forEach(b => { if (b.tipo !== "texto" && !Array.isArray(b.paras)) b.paras = []; if (b.mapa && typeof b.mapa !== "object") b.mapa = {auto:false};
   if (b.tipo === "icone" && !b.mapa) b.mapa = {vivo:true}; });
 // 12/11/2026: a Tendência passa a ser rotineira (entra uma vez nos boletins já salvos; depois o X tira e "Restaurar" devolve)
-if (!S.bul.rot1){ S.bul.rot1 = true;
+if (!_rot1){ S.bul.rot1 = true;
   if (!S.bul.blocks.some(b => b.rotina === "tendencia" || (b.mapa && b.mapa.prefixo === "tendencia_"))){
     const i = S.bul.blocks.findIndex(b => b.tipo === "chuva"); S.bul.blocks.splice(i < 0 ? S.bul.blocks.length : i + 1, 0, TENDENCIA_ROTINA()); } }
 S.opts = {...defaultState().opts, ...(S.opts||{})};
