@@ -1652,13 +1652,13 @@ $("#btnPng").addEventListener("click", e => busy(e.currentTarget, async () => {
   try {
     const c = await svgToCanvas(300);
     const blob = await withDpi(await new Promise(r => c.toBlob(r, "image/png")), 300);
-    if (await saveFile(nomeArq(S.date, "Mapa_icones", "png"), blob)) showMsg("ok", `PNG de ${fmtDateBR(S.date)} gerado (${Math.round(PAGE.w/25.4*300)} × ${Math.round(PAGE.h/25.4*300)} px, 300 dpi).`);
+    if (await saveFile(`previsao_${S.date}.png`, blob)) showMsg("ok", `PNG de ${fmtDateBR(S.date)} gerado (${Math.round(PAGE.w/25.4*300)} × ${Math.round(PAGE.h/25.4*300)} px, 300 dpi).`);
   } catch(err){ showMsg("err", "O navegador não conseguiu gerar a imagem. Tente novamente ou use o SVG."); }
 }));
 $("#btnSvg").addEventListener("click", e => busy(e.currentTarget, async () => {
   if (!await preflight()) return;
   const svg = `<?xml version="1.0" encoding="UTF-8"?>\n` + renderSVG({forExport:true});
-  if (await saveFile(nomeArq(S.date, "Mapa_icones", "svg"), new Blob([svg], {type:"image/svg+xml"}))) showMsg("ok", "SVG gerado (vetorial, abre no Inkscape ou Illustrator).");
+  if (await saveFile(`previsao_${S.date}.svg`, new Blob([svg], {type:"image/svg+xml"}))) showMsg("ok", "SVG gerado (vetorial, abre no Inkscape ou Illustrator).");
 }));
 // jsPDF vem embutido na página (funciona também na cópia salva no computador, sem internet)
 function loadJsPdf(){ return window.jspdf && window.jspdf.jsPDF ? Promise.resolve(window.jspdf.jsPDF) : Promise.reject(new Error("jspdf")); }
@@ -1669,7 +1669,7 @@ $("#btnPdf").addEventListener("click", e => busy(e.currentTarget, async () => {
     const pdf = new JsPDF({orientation:"landscape", unit:"mm", format:[PAGE.w, PAGE.h], compress:true});
     pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, PAGE.w, PAGE.h, undefined, "FAST");
     pdf.setProperties({title:`Previsão de Tempo - ${fmtDateBR(S.date)}`});
-    if (await saveFile(nomeArq(S.date, "Mapa_icones", "pdf"), pdf.output("blob"))) showMsg("ok", "PDF gerado no tamanho do layout (297 × 210 mm).");
+    if (await saveFile(`previsao_${S.date}.pdf`, pdf.output("blob"))) showMsg("ok", "PDF gerado no tamanho do layout (297 × 210 mm).");
   } catch(err){ showMsg("err", "Não foi possível gerar o PDF agora. Tente de novo ou exporte o PNG."); }
 }));
 
@@ -1702,8 +1702,10 @@ function bulIso(){
   const n = /(\d{2})\/(\d{2})\/(\d{4})/.exec(bulDate()); if (n) return `${n[3]}-${n[2]}-${n[1]}`;
   return todayISO();
 }
-/* 12/11/2026: nomes padronizados (AAAAMMDD_Produto):
-   AAAAMMDD_Boletim_diario.pdf / .docx · AAAAMMDD_Previsao_cidades.pdf · AAAAMMDD_Mapa_icones.png / .pdf / .svg */
+/* 12/11/2026: nomes dos arquivos
+   boletim:  AAAAMMDD_Previsoes_e_avisos_meteorologicos.pdf/.docx (AAAAMMDD = data do campo "Data por extenso"; o Drive guarda assim)
+   mapa:     previsao_AAAA-MM-DD.png/.pdf/.svg      -> no Drive: AAAAMMDD-HHMMSS_previsao_AAAA-MM-DD.png
+   cidades:  previsao_cidades_AAAA-MM-DD.pdf        -> no Drive: AAAAMMDD-HHMMSS_previsao_cidades_AAAA-MM-DD.pdf */
 const nomeArq = (iso, produto, ext) => `${String(iso || todayISO()).replace(/-/g, "")}_${produto}.${ext}`;
 function joinPt(list){ return list.length < 2 ? (list[0] || "") : list.slice(0,-1).join(", ") + " e " + list[list.length-1]; }
 const cidadesTxt = () => joinPt(S.rows.map(r => r.name).sort((a,b) => a.localeCompare(b, "pt-BR", {sensitivity:"base"})));
@@ -1714,7 +1716,7 @@ const bid = () => "b" + Date.now().toString(36) + Math.random().toString(36).sli
 
 /* ---- modelos de "Adicionar mapa" ---- */
 const TIPO_NOME = {icone:"Mapa de ícones (Mapa do dia)", severo:"Tempo severo", chuva:"Aviso de chuva", mapa:"Mapa adicional", texto:"Parágrafo"};
-const PREFIXO = {severo:"tempo_severo_", chuva:"chuva_", tendencia:"tendencia_", icones:"mapa_icones"};
+const PREFIXO = {severo:"tempo_severo_", chuva:"chuva_", tendencia:"tendencia_", icones:"previsao_"};
 function novoMapa(modelo){
   const d1 = addDays(S.date, 1), d2 = addDays(S.date, 2), d3 = addDays(S.date, 3);
   const b = {id:bid(), tipo:"mapa", titulo:"", sub:"", novaPagina:true, mapa:{auto:false}, paras:[""], obs:OBS_CIDADES};
@@ -1803,8 +1805,7 @@ function paraJpeg(src, nome){
 const usaVivo = b => b.tipo === "icone" && (!b.mapa || b.mapa.vivo || !MAPAS[b.id]);
 const prefixoDe = b => b.mapa && (b.mapa.prefixo || PREFIXO[b.tipo]);
 function maisRecente(b){ const p = prefixoDe(b); if (!p || !DRIVE_LIST) return null;
-  const n = f => f.nome.toLowerCase(), velho = p === "mapa_icones" ? (f => /(^|_)previsao_\d/.test(n(f))) : () => false;   // nome antigo: …_previsao_2026-…
-  return DRIVE_LIST.find(f => (n(f).includes(p) || velho(f)) && !/poligono/i.test(f.nome)) || null; }
+  return DRIVE_LIST.find(f => f.nome.toLowerCase().includes(p) && !/poligono/i.test(f.nome)) || null; }
 const carregando = new Set();
 async function carregarDoDrive(b, f){
   if (!f || carregando.has(b.id)) return; carregando.add(b.id); renderBlocks();
@@ -2133,7 +2134,7 @@ $("#btnBulPdf").addEventListener("click", e => busy(e.currentTarget, async () =>
       }
     });
     pdf.setProperties({title:`Previsões e avisos meteorológicos - ${fmtDateBR(S.date)}`, author:"SIMGE/IGAM", creator:"Previsão diária MG 2.0"});
-    if (await saveFile(nomeArq(bulIso(), "Boletim_diario", "pdf"), pdf.output("blob")))
+    if (await saveFile(nomeArq(bulIso(), "Previsoes_e_avisos_meteorologicos", "pdf"), pdf.output("blob")))
       showBMsg("ok", `PDF de ${fmtDateBR(S.date)} gerado (A4, ${pages.length} página${pages.length>1?"s":""}).`);
   } catch(err){ showBMsg("err", "Não foi possível gerar o PDF. Tente novamente."); console.error(err); }
 }));
@@ -2244,7 +2245,7 @@ async function gerarDocxBoletim(usaIcone){
     const usaIcone = await checarBoletim(); if (usaIcone === false) return;
     try {
       const blob = await gerarDocxBoletim(usaIcone);
-      if (await saveFile(nomeArq(bulIso(), "Boletim_diario", "docx"), blob))
+      if (await saveFile(nomeArq(bulIso(), "Previsoes_e_avisos_meteorologicos", "docx"), blob))
         showBMsg("ok", `DOCX de ${fmtDateBR(S.date)} gerado.`);
     } catch(err){ showBMsg("err", "Não foi possível gerar o DOCX. Tente novamente."); console.error(err); }
   }));
@@ -2519,7 +2520,7 @@ C$("#btnCidPdf").addEventListener("click", e => busy(e.currentTarget, async () =
       }
     }
     pdf.setProperties({title:`Previsão por cidade - ${cidDate()}`, author:"SIMGE/IGAM", creator:"Previsão diária MG 1.15"});
-    baixarLocal(nomeArq(S.date, "Previsao_cidades", "pdf"), pdf.output("blob"));
+    baixarLocal(`previsao_cidades_${S.date}.pdf`, pdf.output("blob"));
     showCMsg("ok", window.SalvarMaterial ? `PDF de ${fmtDateBR(S.date)} pronto (${pages.length} página${pages.length>1?"s":""}). Salvando no PC e no Drive.` : `PDF de ${fmtDateBR(S.date)} baixado no seu computador (${pages.length} página${pages.length>1?"s":""}).`);
   } catch(err){ showCMsg("err", "Não foi possível gerar o PDF. Tente novamente."); }
 }));
