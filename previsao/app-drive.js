@@ -40,11 +40,11 @@ const DEFAULT_TEXTS = {
 // {cidades} vira a lista de cidades do mapa de ícones.
 const OBS_CIDADES = "**OBS:** Localização aproximada, para termos de referência, das cidades: {cidades}.";
 const BUL_DEFAULT = () => ({
-  v: 2,
+  v: 2, rot1: true,
   dateAuto: true, dateText: "",
   valAuto: true, valText: "",
   blocks: [
-    {id:"icone", tipo:"icone", fixo:true, titulo:"", sub:"", novaPagina:false, paras:[
+    {id:"icone", tipo:"icone", fixo:true, titulo:"", sub:"", novaPagina:false, mapa:{vivo:true}, paras:[
       "Uma frente fria atua no litoral sul da Bahia e contribui para ocorrência de tempestades, chuva moderada a forte, descargas elétricas e rajadas de vento nas mesorregiões do Norte, Noroeste e Jequitinhonha. O céu fica nublado com possibilidade de chuva isolada e temperaturas amenas nas mesorregiões da Zona da Mata, Metropolitana de Belo Horizonte, Rio Doce e Mucuri. No restante de Minas Gerais, o sol aparece entre nuvens, e a temperatura máxima pode chegar a 36 °C no Norte mineiro.",
       "Em Belo Horizonte, o céu fica nublado com possibilidade de chuva isolada. A temperatura máxima prevista é de 25 °C, com umidade relativa do ar em torno de 50% à tarde."
     ], obs: OBS_CIDADES},
@@ -54,9 +54,17 @@ const BUL_DEFAULT = () => ({
     ], obs: "**OBS:** As probabilidades no mapa são interpretadas da seguinte forma: a probabilidade que uma pessoa tem, em um determinado ponto, para observar evento de Tempo Severo num raio de 40 km de distância dela.\n**OBS1:** Localização aproximada, para termos de referência, das cidades: {cidades}."},
     {id:"chuva", tipo:"chuva", fixo:true, titulo:"AVISO DE CHUVA", sub:"", novaPagina:true, mapa:{auto:true}, paras:[
       "O incremento de água precipitável contribui para volumes de precipitação mais acentuados entre 40 e 60 mm no Norte de Minas Gerais. Na porção mais central do Norte, Noroeste e Mucuri o volume de chuva deve ficar entre 20 e 40 mm. No restante do estado há previsão de chuva não significativa. **Atenção às áreas com histórico de alagamentos e enxurradas.**"
-    ], obs: OBS_CIDADES}
+    ], obs: OBS_CIDADES},
+    TENDENCIA_ROTINA()
   ]
 });
+// 12/11/2026: Tendência (chuva) entra no boletim como mapa rotineiro, preenchido sozinho pelo Drive
+function TENDENCIA_ROTINA(){
+  let d0 = ""; try { d0 = S && S.date; } catch(e){}   // S ainda pode não existir quando o modelo é montado
+  const t = d0 ? `TENDÊNCIA – ${ddmm(addDays(d0,1))} e ${ddmm(addDays(d0,2))}` : "TENDÊNCIA";
+  const v = d0 ? `VÁLIDO: 09h ${ddmm(addDays(d0,1))} às 09h ${ddmm(addDays(d0,3))}, hora local` : "";
+  return {id:"tendencia", tipo:"mapa", fixo:true, rotina:"tendencia", titulo:t, sub:v, novaPagina:true,
+  mapa:{auto:true, prefixo:"tendencia_"}, paras:["A tendência é de aumento da instabilidade atmosférica sobre Minas Gerais. Favor acompanhar as próximas atualizações da previsão do tempo."], obs:OBS_CIDADES}; }
 const LOGO_SLOTS = [
   {key:"igam", name:"IGAM", x:11.85, w:40.2},
   {key:"simge", name:"SIMGE", x:54.6, w:53.4},
@@ -176,7 +184,12 @@ S.bul = {...BUL_DEFAULT(), ...(S.bul||{})};
 if (!Array.isArray(S.bul.blocks) || S.bul.v !== 2){ const velho = S.bul, novo = BUL_DEFAULT();
   if (Array.isArray(velho.paras) && velho.paras.some(t => t.trim())) novo.blocks[0].paras = velho.paras.slice();
   S.bul = novo; }
-S.bul.blocks.forEach(b => { if (b.tipo !== "texto" && !Array.isArray(b.paras)) b.paras = []; if (b.mapa && typeof b.mapa !== "object") b.mapa = {auto:false}; });
+S.bul.blocks.forEach(b => { if (b.tipo !== "texto" && !Array.isArray(b.paras)) b.paras = []; if (b.mapa && typeof b.mapa !== "object") b.mapa = {auto:false};
+  if (b.tipo === "icone" && !b.mapa) b.mapa = {vivo:true}; });
+// 12/11/2026: a Tendência passa a ser rotineira (entra uma vez nos boletins já salvos; depois o X tira e "Restaurar" devolve)
+if (!S.bul.rot1){ S.bul.rot1 = true;
+  if (!S.bul.blocks.some(b => b.rotina === "tendencia" || (b.mapa && b.mapa.prefixo === "tendencia_"))){
+    const i = S.bul.blocks.findIndex(b => b.tipo === "chuva"); S.bul.blocks.splice(i < 0 ? S.bul.blocks.length : i + 1, 0, TENDENCIA_ROTINA()); } }
 S.opts = {...defaultState().opts, ...(S.opts||{})};
 if (!S.val) S.val = parseValidity(S.validity) || {time:"09:00", date:addDays(S.date,1), auto:true};
 if (S.val && S.val.auto && S.val.time === "10:00") S.val.time = "09:00";   // 05/11/2026: padrão passou de 10h para 09h
@@ -1578,7 +1591,7 @@ async function saveFile(filename, blob){
   const dl = await dlPromise;
   if (dl === undefined){ // página aberta fora do claude.ai: download direto
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; document.body.append(a); a.click();
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); return true;
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 120000); return true;
   }
   if (!dl){ showMsg("err", "Esta visualização não permite baixar arquivos. Abra o artefato pelo link em uma aba própria do navegador."); return false; }
   try { await dl.save({filename, data: blob}); return true; }
@@ -1768,23 +1781,25 @@ function paraJpeg(src, nome){
       ok({src:c.toDataURL("image/jpeg", 0.9), w:c.width, h:c.height, nome}); };
     im.onerror = () => no(new Error("imagem inválida")); im.src = src; });
 }
+// bloco de ícones: usa o mapa da aba "Mapa do dia" até a pessoa trocar por uma imagem do Drive ou do computador
+const usaVivo = b => b.tipo === "icone" && (!b.mapa || b.mapa.vivo || !MAPAS[b.id]);
 const prefixoDe = b => b.mapa && (b.mapa.prefixo || PREFIXO[b.tipo]);
 function maisRecente(b){ const p = prefixoDe(b); if (!p || !DRIVE_LIST) return null;
   return DRIVE_LIST.find(f => f.nome.toLowerCase().includes(p) && !/poligono/i.test(f.nome)) || null; }
 const carregando = new Set();
 async function carregarDoDrive(b, f){
   if (!f || carregando.has(b.id)) return; carregando.add(b.id); renderBlocks();
-  try { const r = await gsr("lerMapaBoletim", f.id); MAPAS[b.id] = await paraJpeg(`data:${r.mime};base64,${r.b64}`, f.nome); b.mapa.id = f.id; b.mapa.nome = f.nome; persist(); }
+  try { const r = await gsr("lerMapaBoletim", f.id); MAPAS[b.id] = await paraJpeg(`data:${r.mime};base64,${r.b64}`, f.nome); b.mapa.id = f.id; b.mapa.nome = f.nome; b.mapa.vivo = false; persist(); }
   catch(e){ showBMsg("err", `Não foi possível abrir “${esc(f.nome)}” do Drive (${esc(e && e.message ? e.message : e)}).`); }
   carregando.delete(b.id); renderBlocks(); drawBulletin();
 }
 // ao abrir a aba: escolhe sozinho o mais recente (modo automático) ou reabre o arquivo escolhido antes
 async function prepararMapas(force){
   if (!temDrive()) return;
-  const precisa = S.bul.blocks.some(b => b.mapa && (b.mapa.auto || (b.mapa.id && !MAPAS[b.id])));
+  const precisa = S.bul.blocks.some(b => b.mapa && !b.mapa.vivo && (b.mapa.auto || (b.mapa.id && !MAPAS[b.id])));
   if (!precisa && !force) return;
   await listarDrive(force);
-  for (const b of S.bul.blocks){ if (!b.mapa) continue;
+  for (const b of S.bul.blocks){ if (!b.mapa || b.mapa.vivo) continue;
     if (b.mapa.auto){ const f = maisRecente(b); if (f && (!MAPAS[b.id] || b.mapa.id !== f.id)) carregarDoDrive(b, f); }
     else if (b.mapa.id && !MAPAS[b.id]){ const f = (DRIVE_LIST || []).find(x => x.id === b.mapa.id) || {id:b.mapa.id, nome:b.mapa.nome || "mapa"}; carregarDoDrive(b, f); }
   }
@@ -1829,13 +1844,13 @@ function layoutBulletin(){
     y += after;
   };
   const mapa = (b) => {
-    const img = b.tipo === "icone" ? {w:PAGE.w, h:PAGE.h} : MAPAS[b.id];
+    const img = usaVivo(b) ? {w:PAGE.w, h:PAGE.h} : MAPAS[b.id];
     const ratio = img ? img.h / img.w : 0.62;
     let w = b.tipo === "icone" ? 137 : BW, h = w * ratio; const maxH = A4.bottom - A4.top - 4;   // larguras do template: 137 mm (ícones) e 150 mm
     if (h > maxH){ h = maxH; w = h / ratio; }
     y += 2; if (y + h > A4.bottom) newPage();
     const x = (A4.w - w)/2;
-    if (b.tipo === "icone") pg.push({k:"map", x, y, w, h});
+    if (usaVivo(b)) pg.push({k:"map", x, y, w, h});
     else if (img) pg.push({k:"img", src:img.src, x, y, w, h, jpg:true});
     else pg.push({k:"falta", x, y, w, h, t:carregando.has(b.id) ? "Abrindo o mapa do Drive…" : "Escolha o mapa deste bloco"});
     y += h + 3; conteudo = true;
@@ -1907,10 +1922,11 @@ function opcoesDrive(b){
   const p = prefixoDe(b), L = DRIVE_LIST || [];
   const fmt = f => `${esc(f.nome)}${f.data ? " — " + esc(f.data) : ""}`;
   const grupos = [["tempo-severo","Tempo Severo"],["chuva","Chuva e Tendência"],["previsao","Ícones"]];
-  let h = p ? `<option value="auto"${b.mapa.auto ? " selected" : ""}>O mais recente (“${esc(p.replace(/_$/,""))}”) automaticamente</option>` : "";
-  h += `<option value=""${!b.mapa.auto && !b.mapa.id ? " selected" : ""} disabled>Escolher um arquivo do Drive…</option>`;
+  let h = b.tipo === "icone" ? `<option value="vivo"${usaVivo(b) ? " selected" : ""}>Mapa da aba “Mapa do dia” (automático)</option>` : "";
+  h += p ? `<option value="auto"${b.mapa.auto ? " selected" : ""}>O mais recente (“${esc(p.replace(/_$/,""))}”) automaticamente</option>` : "";
+  h += `<option value=""${!b.mapa.auto && !b.mapa.id && !usaVivo(b) ? " selected" : ""} disabled>Escolher um arquivo do Drive…</option>`;
   grupos.forEach(([k, n]) => { const fs = L.filter(f => f.ferramenta === k); if (!fs.length) return;
-    h += `<optgroup label="${n}">` + fs.map(f => `<option value="${esc(f.id)}"${!b.mapa.auto && b.mapa.id === f.id ? " selected" : ""}>${fmt(f)}</option>`).join("") + `</optgroup>`; });
+    h += `<optgroup label="${n}">` + fs.map(f => `<option value="${esc(f.id)}"${!b.mapa.auto && !usaVivo(b) && b.mapa.id === f.id ? " selected" : ""}>${fmt(f)}</option>`).join("") + `</optgroup>`; });
   if (!b.mapa.auto && b.mapa.id && !L.some(f => f.id === b.mapa.id)) h += `<option value="${esc(b.mapa.id)}" selected>${esc(b.mapa.nome || "arquivo escolhido")}</option>`;
   return h;
 }
@@ -1943,10 +1959,10 @@ function renderBlocks(){
     det.open = abertos.has(b.id); det.addEventListener("toggle", () => det.open ? abertos.add(b.id) : abertos.delete(b.id));
     const nome = b.tipo === "texto" ? "Parágrafo avulso" : (plain(b.titulo).trim() || TIPO_NOME[b.tipo]);
     const resumo = b.tipo === "texto" ? plain(b.texto).slice(0, 60) : TIPO_NOME[b.tipo];
-    det.innerHTML = `<summary><span class="num">${i+1}</span><span class="nm"><b>${esc(nome)}</b><small>${esc(resumo)}${b.fixo ? " · fixo" : ""}</small></span>
+    det.innerHTML = `<summary><span class="num">${i+1}</span><span class="nm"><b>${esc(nome)}</b><small>${esc(resumo)}${b.fixo ? " · rotineiro" : ""}</small></span>
       <button class="icobtn" type="button" data-up title="Subir no PDF" aria-label="Subir ${esc(nome)}" ${i===0?"disabled":""}>${UP}</button>
       <button class="icobtn" type="button" data-down title="Descer no PDF" aria-label="Descer ${esc(nome)}" ${i===L.length-1?"disabled":""}>${DOWN}</button>
-      ${b.fixo ? "" : `<button class="icobtn" type="button" data-del title="Excluir do PDF" aria-label="Excluir ${esc(nome)}">${ICON_X}</button>`}</summary><div class="bbody"></div>`;
+      <button class="icobtn" type="button" data-del title="Tirar do boletim" aria-label="Tirar ${esc(nome)} do boletim">${ICON_X}</button></summary><div class="bbody"></div>`;
     const sum = det.querySelector("summary");
     sum.querySelector("[data-up]").onclick = e => { e.preventDefault(); moveBlock(i, -1); };
     sum.querySelector("[data-down]").onclick = e => { e.preventDefault(); moveBlock(i, 1); };
@@ -1971,25 +1987,29 @@ function renderBlocks(){
     body.append(top);
     // mapa
     const mp = document.createElement("div"); mp.className = "bmapa";
-    if (b.tipo === "icone") mp.innerHTML = `<b>Mapa</b><span class="hint">Usa o mapa da aba “Mapa do dia”.</span>`;
-    else {
-      const img = MAPAS[b.id];
-      const est = carregando.has(b.id) ? "Abrindo do Drive…" : img ? `Em uso: <b>${esc(img.nome)}</b>` : "Nenhum mapa escolhido ainda.";
+    {
+      if (!b.mapa) b.mapa = b.tipo === "icone" ? {vivo:true} : {auto:false};
+      const img = MAPAS[b.id], vivo = usaVivo(b);
+      const est = carregando.has(b.id) ? "Abrindo do Drive…" : vivo ? "Em uso: mapa da aba “Mapa do dia” (automático)."
+        : img ? `Em uso: <b>${esc(img.nome)}</b>${b.mapa.auto ? " (o mais recente do Drive, automático)" : ""}` : "Nenhum mapa escolhido ainda.";
       mp.innerHTML = `<b>Mapa</b><span class="hint">${est}</span>
-        <div class="row2">${temDrive() ? `<select class="field" data-drive aria-label="Mapa do Drive">${opcoesDrive(b)}</select>
+        <div class="row2">${temDrive() ? `<select class="field" data-drive aria-label="Trocar a imagem pelo Drive">${opcoesDrive(b)}</select>
           <button class="btn small ghost" type="button" data-relist title="Atualizar a lista do Drive">Atualizar lista</button>` : ""}
-          <label class="btn small" style="cursor:pointer;display:inline-flex">Do computador…<input type="file" accept="image/png,image/jpeg" data-pc hidden></label></div>
+          ${b.tipo === "icone" && !vivo ? `<button class="btn small ghost" type="button" data-vivo>Voltar ao mapa do dia</button>` : ""}
+          <label class="btn small" style="cursor:pointer;display:inline-flex" title="Trocar a imagem por um PNG/JPG do computador">Enviar imagem…<input type="file" accept="image/png,image/jpeg" data-pc hidden></label></div>
         ${DRIVE_ERR && temDrive() ? `<span class="hint err">Não foi possível listar o Drive: ${esc(DRIVE_ERR)}</span>` : ""}
         ${!temDrive() ? `<span class="hint">Fora do Apps Script só dá para escolher do computador.</span>` : ""}`;
       const sel = mp.querySelector("[data-drive]");
       if (sel) sel.onchange = () => { const v = sel.value;
+        if (v === "vivo"){ b.mapa = {vivo:true}; delete MAPAS[b.id]; renderBlocks(); bulChanged(); return; }
         if (v === "auto"){ b.mapa.auto = true; persist(); prepararMapas(); return; }
         const f = (DRIVE_LIST || []).find(x => x.id === v) || {id:v, nome:b.mapa.nome};
         b.mapa.auto = false; carregarDoDrive(b, f); };
+      mp.querySelector("[data-vivo]")?.addEventListener("click", () => { b.mapa = {vivo:true}; delete MAPAS[b.id]; renderBlocks(); bulChanged(); });
       mp.querySelector("[data-relist]")?.addEventListener("click", async () => { await prepararMapas(true); renderBlocks(); });
       mp.querySelector("[data-pc]").onchange = e => { const file = e.target.files[0]; if (!file) return;
         const r = new FileReader(); r.onload = async () => { try { MAPAS[b.id] = await paraJpeg(r.result, file.name);
-          b.mapa.auto = false; b.mapa.id = ""; b.mapa.nome = file.name; renderBlocks(); bulChanged(); } catch(err){ showBMsg("err", "Não foi possível ler essa imagem. Use PNG ou JPG."); } };
+          b.mapa.auto = false; b.mapa.vivo = false; b.mapa.id = ""; b.mapa.nome = file.name; renderBlocks(); bulChanged(); } catch(err){ showBMsg("err", "Não foi possível ler essa imagem. Use PNG ou JPG."); } };
         r.readAsDataURL(file); };
     }
     body.append(mp);
@@ -2064,12 +2084,17 @@ $(".tabs").addEventListener("keydown", e => {
 });
 // ---- geração do PDF ----
 const hexRgb = h => [1,3,5].map(i => parseInt(h.slice(i, i+2), 16));
+// validações comuns ao PDF e ao DOCX; devolve se usa o mapa do dia (ou false se não dá para gerar)
+async function checarBoletim(){
+  const faltam = S.bul.blocks.filter(b => b.mapa && b.tipo !== "icone" && !b.mapa.vivo && !MAPAS[b.id]).map(b => `“${esc(plain(b.titulo).trim() || TIPO_NOME[b.tipo])}”`);
+  if (faltam.length){ showBMsg("err", `Falta escolher o mapa de ${joinPt(faltam)}.` + (carregando.size ? " Alguns mapas ainda estão abrindo; aguarde um instante." : "")); return false; }
+  if (!S.bul.blocks.some(b => b.tipo === "texto" ? b.texto.trim() : b.paras.some(t => t.trim()))){ showBMsg("err", "Escreva pelo menos um parágrafo de previsão."); return false; }
+  const usaIcone = S.bul.blocks.some(usaVivo);
+  if (usaIcone && !await preflight()){ if (!msg.hidden) setView("map"); return false; }
+  return usaIcone;
+}
 $("#btnBulPdf").addEventListener("click", e => busy(e.currentTarget, async () => {
-  const faltam = S.bul.blocks.filter(b => b.mapa && !MAPAS[b.id]).map(b => `“${esc(plain(b.titulo).trim() || TIPO_NOME[b.tipo])}”`);
-  if (faltam.length){ showBMsg("err", `Falta escolher o mapa de ${joinPt(faltam)}.` + (carregando.size ? " Alguns mapas ainda estão abrindo; aguarde um instante." : "")); return; }
-  if (!S.bul.blocks.some(b => b.tipo === "texto" ? b.texto.trim() : b.paras.some(t => t.trim()))){ showBMsg("err", "Escreva pelo menos um parágrafo de previsão."); return; }
-  const usaIcone = S.bul.blocks.some(b => b.tipo === "icone");
-  if (usaIcone && !await preflight()){ if (!msg.hidden) setView("map"); return; }
+  const usaIcone = await checarBoletim(); if (usaIcone === false) return;
   try {
     const JsPDF = await loadJsPdf();
     const pages = layoutBulletin();
@@ -2093,6 +2118,119 @@ $("#btnBulPdf").addEventListener("click", e => busy(e.currentTarget, async () =>
       showBMsg("ok", `PDF de ${fmtDateBR(S.date)} gerado (A4, ${pages.length} página${pages.length>1?"s":""}).`);
   } catch(err){ showBMsg("err", "Não foi possível gerar o PDF. Tente novamente."); console.error(err); }
 }));
+
+/* ================= boletim em Word (.docx) — 12/11/2026 =================
+   Mesmo conteúdo e mesma ordem do PDF: data, validade, blocos (título, subtítulo, parágrafos com negrito/destaque,
+   mapa e observações), cabeçalho da capa, cabeçalho das demais páginas e rodapé do modelo. Vai para a pasta
+   "Boletim diário" no Drive (SalvarArquivo.gs decide a pasta pelo nome) e sempre baixa no PC. */
+const DX = (() => {
+  const T = new Uint32Array(256); for (let n = 0; n < 256; n++){ let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; T[n] = c >>> 0; }
+  const crc = b => { let c = 0xFFFFFFFF; for (let i = 0; i < b.length; i++) c = T[(c ^ b[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+  const enc = s => new TextEncoder().encode(s);
+  function zip(files){   // ZIP sem compressão (o Word abre normalmente)
+    const parts = [], central = []; let off = 0;
+    for (const f of files){
+      const nm = enc(f.name), d = typeof f.data === "string" ? enc(f.data) : f.data, c = crc(d);
+      const h = new Uint8Array(30 + nm.length), v = new DataView(h.buffer);
+      v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true); v.setUint16(6, 0x0800, true); v.setUint32(14, c, true);
+      v.setUint32(18, d.length, true); v.setUint32(22, d.length, true); v.setUint16(26, nm.length, true); h.set(nm, 30);
+      const ce = new Uint8Array(46 + nm.length), w = new DataView(ce.buffer);
+      w.setUint32(0, 0x02014b50, true); w.setUint16(4, 20, true); w.setUint16(6, 20, true); w.setUint16(8, 0x0800, true); w.setUint32(16, c, true);
+      w.setUint32(20, d.length, true); w.setUint32(24, d.length, true); w.setUint16(28, nm.length, true); w.setUint32(42, off, true); ce.set(nm, 46);
+      parts.push(h, d); central.push(ce); off += h.length + d.length;
+    }
+    const cs = central.reduce((a, x) => a + x.length, 0), e = new Uint8Array(22), z = new DataView(e.buffer);
+    z.setUint32(0, 0x06054b50, true); z.setUint16(8, files.length, true); z.setUint16(10, files.length, true); z.setUint32(12, cs, true); z.setUint32(16, off, true);
+    return new Blob([...parts, ...central, e], {type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
+  }
+  const b64bytes = src => { const s = atob(String(src).split(",")[1] || ""), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+  const x = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const EMU = mm => Math.round(mm * 36000), TW = mm => Math.round(mm * 56.6929);
+  return {zip, b64bytes, x, EMU, TW};
+})();
+async function gerarDocxBoletim(usaIcone){
+  const {x, EMU, TW} = DX, MD = MODELO();
+  const media = [];   // {name, data, ext}
+  let docPr = 1;
+  const addImg = (src, rels) => { const ext = /^data:image\/png/.test(src) ? "png" : "jpeg"; const name = `img${media.length + 1}.${ext}`;
+    media.push({name, data:DX.b64bytes(src), ext}); const id = "rId" + (rels.length + 10); rels.push(`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${name}"/>`); return id; };
+  const graphic = (rid, cx, cy) => `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="imagem"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
+  const inline = (rid, wmm, hmm) => { const cx = EMU(wmm), cy = EMU(hmm), id = docPr++;
+    return `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${id}" name="Mapa ${id}"/>${graphic(rid, cx, cy)}</wp:inline></w:drawing></w:r>`; };
+  const anchor = (rid, xmm, ymm, wmm, hmm) => { const cx = EMU(wmm), cy = EMU(hmm), id = docPr++;
+    return `<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="${id}" behindDoc="1" locked="1" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>${EMU(xmm)}</wp:posOffset></wp:positionH><wp:positionV relativeFrom="page"><wp:posOffset>${EMU(ymm)}</wp:posOffset></wp:positionV><wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/><wp:docPr id="${id}" name="Modelo ${id}"/><wp:cNvGraphicFramePr/>${graphic(rid, cx, cy)}</wp:anchor></w:drawing></w:r>`; };
+  const HLDOCX = {amarelo:"FFFF00", verde:"00FF00", laranja:"FF9900", vermelho:"FF4D4D"};
+  const run = (t, o = {}) => `<w:r><w:rPr>${o.b ? "<w:b/>" : ""}${o.c ? `<w:color w:val="${o.c}"/>` : ""}${o.u ? `<w:u w:val="single"/>` : ""}<w:sz w:val="${o.pt * 2}"/>${o.hl ? `<w:shd w:val="clear" w:color="auto" w:fill="${HLDOCX[o.hl]}"/>` : ""}</w:rPr><w:t xml:space="preserve">${x(t)}</w:t></w:r>`;
+  const pP = (o = {}) => `<w:pPr>${o.pb ? "<w:pageBreakBefore/>" : ""}${o.keep ? "<w:keepNext/>" : ""}${o.bord ? `<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="4" w:color="7F7F7F"/></w:pBdr>` : ""}<w:spacing w:before="${o.before || 0}" w:after="${o.after || 0}" w:line="${o.line || 240}" w:lineRule="auto"/><w:jc w:val="${o.jc || "both"}"/></w:pPr>`;
+  const richRuns = (text, pt) => tokenize(text).map((w, wi, all) => w.map(g => run(g.t, {b:g.b, hl:g.hl, pt})).join("") + (wi < all.length - 1 ? run(" ", {pt}) : "")).join("");
+  const body = [], drels = [];
+  // data e validade (na capa o texto começa abaixo do cabeçalho grande: 58 mm, como no PDF)
+  body.push(`<w:p>${pP({jc:"center", before:TW(58 - A4.top), after:60})}${run(plain(bulDate()), {b:true, pt:14})}</w:p>`);
+  body.push(`<w:p>${pP({jc:"center", after:120, bord:true})}${run(plain(bulVal()), {pt:11})}</w:p>`);
+  let mapJpg = null, conteudo = false;
+  for (const b of S.bul.blocks){
+    if (b.tipo === "texto"){ if (b.texto.trim()) body.push(`<w:p>${pP({after:36, line:300})}${richRuns(b.texto, 11)}</w:p>`); conteudo = true; continue; }
+    let pb = !!(b.novaPagina && conteudo);
+    if (b.titulo && b.titulo.trim()){ body.push(`<w:p>${pP({jc:"center", pb, before:60, after:60, keep:true})}${run(plain(b.titulo), {b:true, pt:14, c:"0B5394"})}</w:p>`); pb = false; }
+    if (b.sub && b.sub.trim()){ body.push(`<w:p>${pP({jc:"center", pb, after:80, keep:true})}${run(plain(b.sub), {pt:11})}</w:p>`); pb = false; }
+    (b.paras || []).filter(t => t.trim()).forEach(t => { body.push(`<w:p>${pP({pb, after:36, line:300})}${richRuns(t, 11)}</w:p>`); pb = false; });
+    if (b.link){ const id = "rIdL" + drels.length;
+      drels.push(`<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${x(LINK_METODO)}" TargetMode="External"/>`);
+      body.push(`<w:p>${pP({after:36})}<w:hyperlink r:id="${id}">${run("Entenda mais a metodologia empregada.", {b:true, u:true, c:"1155CC", pt:11})}</w:hyperlink></w:p>`); }
+    // mapa (mesmas larguras do PDF: 137 mm ícones, 150 mm os demais)
+    let src, ratio;
+    if (usaVivo(b)){ if (!mapJpg) mapJpg = (await svgToCanvas(300)).toDataURL("image/jpeg", 0.92); src = mapJpg; ratio = PAGE.h / PAGE.w; }
+    else if (MAPAS[b.id]){ src = MAPAS[b.id].src; ratio = MAPAS[b.id].h / MAPAS[b.id].w; }
+    if (src){ let w = b.tipo === "icone" ? 137 : BW, h = w * ratio; const maxH = A4.bottom - A4.top - 10; if (h > maxH){ h = maxH; w = h / ratio; }
+      body.push(`<w:p>${pP({jc:"center", pb, before:80, after:80})}${inline(addImg(src, drels), w, h)}</w:p>`); pb = false; }
+    pdfSafe(comCidades(b.obs)).split("\n").filter(t => t.trim()).forEach(t => body.push(`<w:p>${pP({after:30, line:260})}${richRuns(t, 9)}</w:p>`));
+    conteudo = true;
+  }
+  // cabeçalhos e rodapé do modelo (imagens presas à página, como no PDF)
+  const parts = [], hdr = (nome, xml, rels) => parts.push({name:`word/${nome}.xml`, data:xml}, {name:`word/_rels/${nome}.xml.rels`, data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels.join("")}</Relationships>`});
+  const NS = `xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"`;
+  let sect = "";
+  if (MD){
+    const mk = (tag, nome, H, y) => { const rels = []; const w = tag === "ftr" ? 206.4 : A4.w, h = w * H.h / H.w;
+      const yy = y === null ? A4.h - h - 1.5 : y, xx = (A4.w - w) / 2;
+      hdr(nome, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:${tag} ${NS}><w:p>${anchor(addImg(H.src, rels), xx, yy, w, h)}</w:p></w:${tag}>`, rels); };
+    mk("hdr", "header1", MD.cabecalhoCapa, 0); mk("hdr", "header2", MD.cabecalho, 0); mk("ftr", "footer1", MD.rodape, null);
+    drels.push(`<Relationship Id="rIdH1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>`,
+      `<Relationship Id="rIdH2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header2.xml"/>`,
+      `<Relationship Id="rIdF1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>`);
+    sect = `<w:headerReference w:type="first" r:id="rIdH1"/><w:headerReference w:type="default" r:id="rIdH2"/><w:footerReference w:type="first" r:id="rIdF1"/><w:footerReference w:type="default" r:id="rIdF1"/>`;
+  }
+  drels.push(`<Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`);
+  const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document ${NS}><w:body>${body.join("")}<w:sectPr>${sect}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="${TW(A4.top)}" w:right="${TW(A4.mr)}" w:bottom="${TW(A4.h - A4.bottom)}" w:left="${TW(A4.ml)}" w:header="0" w:footer="0" w:gutter="0"/>${MD ? "<w:titlePg/>" : ""}</w:sectPr></w:body></w:document>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Open Sans" w:hAnsi="Open Sans" w:cs="Open Sans" w:eastAsia="Open Sans"/><w:sz w:val="22"/><w:lang w:val="pt-BR"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0"/></w:pPr></w:pPrDefault></w:docDefaults></w:styles>`;
+  const ct = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpeg" ContentType="image/jpeg"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>${MD ? `<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/header2.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>` : ""}</Types>`;
+  return DX.zip([
+    {name:"[Content_Types].xml", data:ct},
+    {name:"_rels/.rels", data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`},
+    {name:"word/document.xml", data:doc},
+    {name:"word/styles.xml", data:styles},
+    {name:"word/_rels/document.xml.rels", data:`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${drels.join("")}</Relationships>`},
+    ...parts,
+    ...media.map(m => ({name:`word/media/${m.name}`, data:m.data}))
+  ]);
+}
+// botão "Gerar DOCX" ao lado do "Gerar PDF" (criado aqui para não precisar mexer no HTML do Apps Script)
+(function(){
+  const pdfBtn = document.getElementById("btnBulPdf"); if (!pdfBtn || document.getElementById("btnBulDocx")) return;
+  const b = pdfBtn.cloneNode(true); b.id = "btnBulDocx"; b.classList.remove("primary");
+  [...b.childNodes].forEach(n => { if (n.nodeType === 3) n.remove(); }); b.append(" Gerar DOCX do boletim");
+  b.title = "Boletim completo em Word (.docx): baixa no PC e vai para a pasta Boletim diário no Drive";
+  pdfBtn.after(b);
+  b.addEventListener("click", e => busy(e.currentTarget, async () => {
+    const usaIcone = await checarBoletim(); if (usaIcone === false) return;
+    try {
+      const blob = await gerarDocxBoletim(usaIcone);
+      if (await saveFile(`${S.date.replace(/-/g, "")}_Previsoes_e_avisos_meteorologicos.docx`, blob))
+        showBMsg("ok", `DOCX de ${fmtDateBR(S.date)} gerado.`);
+    } catch(err){ showBMsg("err", "Não foi possível gerar o DOCX. Tente novamente."); console.error(err); }
+  }));
+})();
+
 // o boletim acompanha mudanças feitas no mapa
 const _drawPreview = drawPreview;
 drawPreview = function(){ _drawPreview(); if (!$("#viewBul").hidden){ fillBulletinAuto(); drawBulletin(); } };

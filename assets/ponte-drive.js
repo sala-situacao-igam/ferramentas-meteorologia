@@ -185,6 +185,33 @@
     });
   }
 
+  /* ---------------- pasta certa de cada arquivo (12/11/2026) ----------------
+     Mesmos IDs do CONFIG.PASTAS (Codigo.gs). Ficam aqui também para o aviso funcionar mesmo quando o Drive não responde. */
+  var PASTAS = {
+    'alertas': ['1BCQl4LocJdCxAQPZ2RSWzOb3fD7KoClx', 'Alertas'],
+    'tempo-severo': ['1YA3NL4mRDx_CyzE6w8vB3PPfe5bbIc2Y', 'Tempo severo'],
+    'chuva': ['1SXuqt0iTd50PN93Sa8WvwWAB2ZZDAmET', 'Chuva e tendência'],
+    'previsao': ['1-iy3WTP0sDHzfxVGBUW7bhr6zKq6sZsF', 'Mapa de ícones (PNG)'],
+    'previsao-boletim': ['1klZYBB8J24mzEBvkTpi0qpS4Io3GQPxV', 'Boletim diário'],
+    'previsao-cidades': ['19YtqMK1eNVfcpwH7Zq4-mX8tfO7lr47H', 'Previsão cidades'],
+    'reservatorios': ['1YZ_J-QTzj7S8G_qnRtg2Zs-b31J2itmq', 'Reservatórios'],
+    'curto-prazo': ['1SXuqt0iTd50PN93Sa8WvwWAB2ZZDAmET', 'Chuva e tendência'],
+    'umidade-minima': ['1-iy3WTP0sDHzfxVGBUW7bhr6zKq6sZsF', 'Mapa de ícones (PNG)']
+  };
+  function pastaDoArquivo(nome) {   // mesma regra do destinoPrevisao_ (SalvarArquivo.gs)
+    var f = FERRAMENTA();
+    if (f === 'previsao') {
+      if (/previsoes_e_avisos|boletim/i.test(nome) || /\.docx$/i.test(nome)) f = 'previsao-boletim';
+      else if (/previsao_cidades|cidade/i.test(nome)) f = 'previsao-cidades';
+    }
+    var p = PASTAS[f]; return p ? { url: 'https://drive.google.com/drive/folders/' + p[0], nome: p[1] } : null;
+  }
+  function subirManual(nome) {
+    var p = pastaDoArquivo(nome);
+    return ' <b>Suba este arquivo manualmente no Drive</b>' + (p ? ', na pasta <a href="' + esc(p.url) + '" target="_blank" rel="noopener">' + esc(p.nome) + '</a>' : '') +
+      ' (o arquivo está na pasta Downloads do seu PC).';
+  }
+
   /* ---------------- materiais de cada ferramenta (botão original que gera o arquivo) ---------------- */
   // id: botão da ferramenta (fica escondido). O painel mostra só os materiais da aba/página aberta:
   // o botão original precisa estar na parte visível da tela (ou, com vista, essa área precisa estar visível).
@@ -194,8 +221,9 @@
       { id: 'btnPng', nome: 'Mapa do dia', tipo: 'PNG', desc: 'Imagem 300 dpi (3508 × 2480 px)', onde: 'Mapa do dia', aba: '#tabMap' },
       { id: 'btnPdf', nome: 'Mapa do dia', tipo: 'PDF', desc: 'A4 paisagem', onde: 'Mapa do dia', aba: '#tabMap' },
       { id: 'btnSvg', nome: 'Mapa do dia', tipo: 'SVG', desc: 'Vetorial, para edição', onde: 'Mapa do dia', aba: '#tabMap' },
-      { id: 'btnBulPdf', nome: 'Boletim', tipo: 'PDF', desc: 'Boletim completo', onde: 'Boletim em PDF', aba: '#tabBul' },
-      { id: 'btnCidPdf', nome: 'Previsão por cidade', tipo: 'PDF', desc: 'Uma página por cidade', onde: 'Previsão por cidade', aba: '#tabCid' }
+      { id: 'btnBulPdf', nome: 'Boletim diário', tipo: 'PDF', desc: 'Boletim completo (pasta Boletim diário)', onde: 'Boletim em PDF', aba: '#tabBul' },
+      { id: 'btnBulDocx', nome: 'Boletim diário', tipo: 'DOCX', desc: 'Boletim completo em Word (pasta Boletim diário)', onde: 'Boletim em PDF', aba: '#tabBul' },
+      { id: 'btnCidPdf', nome: 'Previsão por cidade', tipo: 'PDF', desc: 'Uma página por cidade (pasta Previsão cidades)', onde: 'Previsão por cidade', aba: '#tabCid' }
     ],
     'tempo-severo': [
       { id: 'pngBtn', nome: 'Mapa de tempo severo', tipo: 'PNG', desc: 'Imagem 300 dpi' },
@@ -542,7 +570,7 @@
   // salva o arquivo gerado no PC e no Drive ao mesmo tempo e mostra o resultado em cores
   function salvarAmbos(it, k, soDrive) {
     var pc = soDrive ? it.pcOk : false;
-    if (!soDrive && !it.semPc) { try { baixarNoPc(it.nome, it.blob); pc = true; } catch (e) { pc = false; } }
+    if (!soDrive) { try { baixarNoPc(it.nome, it.blob); pc = true; } catch (e) { pc = false; } }   // 12/11/2026: sempre baixa no PC
     it.pcOk = pc;
     if (it.soPc) {   // tipo que o Drive da equipe não recebe (ex.: .txt dos alertas do dia)
       if (pc) fim(k, it, 'ok', '✓ <b>' + esc(it.nome) + '</b> salvo no PC (pasta Downloads). Este tipo de arquivo fica só no PC.');
@@ -566,9 +594,9 @@
       var motivo = e && e.semDrive ? 'esta plataforma de teste não está ligada ao Drive (na plataforma oficial, salva no Drive da equipe)'
         : ((e && e.message) ? e.message : String(e || 'erro'));
       var tentar = e && e.semDrive ? '' : ' <button type="button" class="mini" data-a="drive2">Tentar o Drive de novo</button>';
-      if (pc) fim(k, it, 'parcial', '<b>' + esc(it.nome) + '</b>: salvo no PC (pasta Downloads), mas <b>não foi salvo no Drive</b>: ' + esc(motivo) + '.' + tentar);
-      if (e && e.semDrive) alertaTeste(it.nome);
-      else fim(k, it, 'erro', '<b>' + esc(it.nome) + ' não foi salvo</b> (Drive: ' + esc(motivo) + ').' + tentar);
+      if (e && e.semDrive) { if (pc) fim(k, it, 'parcial', '<b>' + esc(it.nome) + '</b>: salvo no PC (pasta Downloads), mas <b>não foi salvo no Drive</b>: ' + esc(motivo) + '.'); alertaTeste(it.nome); }
+      else if (pc) fim(k, it, 'erro', '⚠ <b>' + esc(it.nome) + '</b> foi salvo no PC, mas <b>NÃO foi salvo no Drive</b> (' + esc(motivo) + ').' + subirManual(it.nome) + tentar);
+      else fim(k, it, 'erro', '<b>' + esc(it.nome) + ' não foi salvo</b> (Drive: ' + esc(motivo) + '). Gere o arquivo de novo e suba manualmente no Drive.' + tentar);
     });
   }
   function fim(k, it, estado, html) { atualizar(RES[k] = { estado: estado, html: html, it: it, k: k }); }
@@ -598,7 +626,7 @@
     var k = esperando ? esperando.k : 'auto:' + (o.nome || 'arquivo');
     esperando = null;
     var it = { nome: o.nome || 'arquivo', blob: o.blob, salvarDrive: o.salvarDrive || null, driveFeito: o.driveFeito || null, drivePromessa: o.drivePromessa || null, semPc: !!o.semPc,
-      soPc: !o.driveFeito && !o.drivePromessa && !o.salvarDrive && !/\.(png|kml|pdf|svg|csv)$/i.test(o.nome || '') };   // salvarArquivo (SalvarArquivo.gs) só aceita PNG, KML, PDF, SVG e CSV
+      soPc: !o.driveFeito && !o.drivePromessa && !o.salvarDrive && !/\.(png|kml|pdf|svg|csv|docx)$/i.test(o.nome || '') };   // salvarArquivo (SalvarArquivo.gs) só aceita PNG, KML, PDF, SVG e CSV
     salvarAmbos(it, k);
     return it;
   }
@@ -732,8 +760,14 @@
   HTMLAnchorElement.prototype.click = function () {
     if (this.hasAttribute('download') && this.getAttribute('data-local') !== '1' && /^(blob:|data:)/.test(this.href || '')) {
       var nome = this.getAttribute('download') || 'arquivo';
+      var link = this;
       fetch(this.href).then(function (r) { return r.blob(); }).then(function (blob) { abrir({ nome: nome, blob: blob }); })
-        .catch(function () { /* não conseguiu ler: download direto, para nada se perder */ });
+        .catch(function (e) {   // 12/11/2026: antes o erro sumia e o arquivo não ia para lugar nenhum
+          try { clickOriginal.call(link); } catch (x) {}
+          montar();
+          avisar('⚠ <b>' + esc(nome) + '</b> <b>NÃO foi salvo no Drive</b> (não foi possível ler o arquivo gerado: ' + esc(e && e.message || e || 'erro') + ').' +
+            ' Ele foi baixado no PC.' + subirManual(nome), 'erro', 0);
+        });
       return;
     }
     return clickOriginal.apply(this, arguments);

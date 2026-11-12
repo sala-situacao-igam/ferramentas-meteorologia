@@ -561,7 +561,7 @@ function applyAlertPreset(){
 function buildMessage(){
   const type=$('type').value,t=$('time').value,dur=$('duration').value,ph=fenomenos();
   const cities=[...state.selected].sort((a,b)=>a.localeCompare(b,'pt-BR'));
-  $('message').value=(state.renovando?'RENOVAÇÃO — ':(state.editando?'RETIFICAÇÃO — ':''))+`Alerta de ${type}${ph.length?' com '+textList(ph):''} às ${t}h com duração de ${dur}h. Cidades: ${textList(cities)}. FONTE: SIMGE/IGAM`;
+  $('message').value=`Alerta de ${type}${ph.length?' com '+textList(ph):''} às ${t}h com duração de ${dur}h. Cidades: ${textList(cities)}. FONTE: SIMGE/IGAM`;
 }
 function emitStatus(texto,tipo){$('emitStatus').className='st'+(tipo?' '+tipo:'');$('emitStatus').textContent=texto;}
 function openModal(){
@@ -578,7 +578,10 @@ $('cancel').onclick=()=>{$('modalback').style.display='none';if(state.renovando)
 $('type').addEventListener('change',applyAlertPreset);
 ['duration','time'].forEach(id=>$(id).addEventListener('change',buildMessage));
 document.querySelectorAll('.phen').forEach(x=>x.addEventListener('change',buildMessage));
+// 12/11/2026: a mensagem nunca sai com "RENOVAÇÃO – " / "RETIFICAÇÃO – " (nem copiada, nem gravada)
+const semPrefixo=t=>String(t||'').replace(/^\s*(?:(?:RETIFICA[ÇC][ÃA]O|RENOVA[ÇC][ÃA]O)\s*[—–:\-]?\s*)+/i,'');
 $('copy').onclick=async()=>{
+  $('message').value=semPrefixo($('message').value);
   try{await navigator.clipboard.writeText($('message').value);$('copy').textContent='Copiado!';}
   catch(e){$('message').select();$('copy').textContent='Selecionado, use Ctrl+C';}
   setTimeout(()=>$('copy').textContent='Copiar mensagem',1500);
@@ -653,7 +656,7 @@ $('emit').onclick=()=>{
   }
   const folder=kmlStamp(),orig=state.editando;   // v4.4: alerta sendo editado (é substituído depois que o novo for registrado)
   const a={id:'',kmlUrl:'',type:$('type').value,owner:$('owner').value.trim()||$('pResp').value.trim()||'Sem identificação',
-    start,end:endTime(start,dur),duration:dur,cities,phen:fenomenos(),message:$('message').value,folder,renovaDe:state.renovando?(state.renovando.id||''):(orig&&orig.renovaDe)||'',editaDe:orig?(orig.id||''):''};
+    start,end:endTime(start,dur),duration:dur,cities,phen:fenomenos(),message:semPrefixo($('message').value),folder,renovaDe:state.renovando?(state.renovando.id||''):(orig&&orig.renovaDe)||'',editaDe:orig?(orig.id||''):''};
   const payload={
     data:$('pData').value||hojeLocal(),horario:a.start,duracao:a.duration,fim:a.end,tipo:a.type,
     fenomenos:a.phen,responsavel:a.owner,mensagem:a.message,
@@ -2225,7 +2228,7 @@ function abrirEdicao(){
   $('tituloModal').textContent='Editar alerta';
   $('emit').textContent='Salvar edição';
   buildMessage();
-  emitStatus('Editando o alerta '+a.start+'–'+a.end+'. Ao salvar, a versão corrigida entra como alerta novo (KML novo, mensagem com "RETIFICAÇÃO") '+
+  emitStatus('Editando o alerta '+a.start+'–'+a.end+'. Ao salvar, a versão corrigida entra como alerta novo (KML novo e mensagem corrigida) '+
     'e o original é excluído: fica na planilha como "Excluído" e sai do mapa, do .txt e do relatório. Reenvie a mensagem corrigida.');
   botaoAjustar().hidden=false;
 }
