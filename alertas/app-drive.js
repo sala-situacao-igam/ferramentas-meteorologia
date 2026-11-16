@@ -1,4 +1,6 @@
-/* Alertas e passagem de plantão — código da página (v4.5, 09/11/2026).
+/* Alertas e passagem de plantão — código da página (v4.6, 16/11/2026).
+   v4.6: na janela "Alertas para o site", caixas de seleção em cada alerta + "Selecionar todos" e o botão
+         "Copiar selecionados" (continuam o "Copiar" individual e o "Copiar todos").
    v4.5: botão "📋 Alertas para o site" (janela com os alertas emitidos no dia, prontos para o site, com "Copiar todos";
          precisa do AlertasSite.gs no Apps Script).
    v4.4 (Patrick/Claude, sobre a v4.3 da equipe): (1) botão "✎ Editar" nos alertas próprios e vigentes (abre a janela
@@ -2493,7 +2495,7 @@ async function copiarSite(lista){
   try{await navigator.clipboard.writeText(txt);return 'texto';}catch(e){}
   return '';
 }
-const siteUI={data:'',lista:[],carregando:false};
+const siteUI={data:'',lista:[],carregando:false,sel:new Set()};
 function montarJanelaSite(){
   if($('siteBack'))return;
   const st=document.createElement('style');
@@ -2503,7 +2505,10 @@ function montarJanelaSite(){
     '#siteBack .topo input{width:auto}'+
     '#siteBack .cont{font-size:13px;color:var(--muted)}'+
     '#siteLista{border:1px solid var(--line);border-radius:8px;max-height:58vh;overflow:auto;background:var(--card)}'+
-    '#siteLista .it{padding:10px 12px;border-bottom:1px solid var(--line-2);display:grid;grid-template-columns:1fr auto;gap:4px 10px;align-items:start}'+
+    '#siteLista .it{padding:10px 12px;border-bottom:1px solid var(--line-2);display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:start}'+
+    '#siteLista .it.sel{background:rgba(13,110,253,.07)}'+
+    '#siteLista .it input[type=checkbox]{margin-top:3px;width:16px;height:16px;cursor:pointer}'+
+    '#siteBack .selt{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin:0}'+
     '#siteLista .it:last-child{border-bottom:0}'+
     '#siteLista .meta{grid-column:1/-1;font-size:12px;color:var(--muted)}'+
     '#siteLista p{margin:0;line-height:1.45}'+
@@ -2520,10 +2525,12 @@ function montarJanelaSite(){
     '<button type="button" class="btn small" id="siteHoje">Hoje</button>'+
     '<button type="button" class="btn small" id="sitePro" title="Dia seguinte">▶</button>'+
     '<button type="button" class="btn small" id="siteAtual">↻ Atualizar</button>'+
-    '<span class="cont" id="siteCont"></span></div>'+
+    '<span class="cont" id="siteCont"></span>'+
+    '<label class="selt" id="siteSelTodosL"><input type="checkbox" id="siteSelTodos"> Selecionar todos</label></div>'+
     '<div id="siteLista" aria-live="polite"></div>'+
     '<div class="rodape"><span class="st" id="siteSt"></span><span>'+
     '<button type="button" class="btn" id="siteFechar">Fechar</button> '+
+    '<button type="button" class="btn" id="siteCopiarSel">☑ Copiar selecionados</button> '+
     '<button type="button" class="btn primary" id="siteCopiar">📋 Copiar todos</button></span></div></div>';
   document.body.appendChild(back);
   back.addEventListener('click',e=>{if(e.target===back)fecharSite();});
@@ -2541,11 +2548,34 @@ function montarJanelaSite(){
       r==='texto'?'Copiado só como texto (sem negrito): este navegador não deixou copiar a formatação.':
       'Não foi possível copiar. Selecione o texto da lista com o mouse e use Ctrl+C.',r==='ok'?'ok':'erro');
   };
+  $('siteCopiarSel').onclick=async()=>{
+    const idx=[...siteUI.sel].sort((a,b)=>a-b);if(!idx.length)return;
+    const r=await copiarSite(idx.map(i=>textoSite(siteUI.lista[i])));
+    siteMsg(r==='ok'?'Copiado: '+idx.length+' alerta(s) selecionado(s), com o negrito. É só colar no site.':
+      r==='texto'?'Copiado só como texto (sem negrito): este navegador não deixou copiar a formatação.':
+      'Não foi possível copiar. Selecione o texto da lista com o mouse e use Ctrl+C.',r==='ok'?'ok':'erro');
+  };
+  $('siteSelTodos').onchange=e=>{
+    siteUI.sel=new Set(e.target.checked?siteUI.lista.map((_,i)=>i):[]);
+    document.querySelectorAll('#siteLista input[data-s]').forEach(c=>{c.checked=e.target.checked;c.closest('.it').classList.toggle('sel',c.checked);});
+    atualizarSelSite();
+  };
+  $('siteLista').addEventListener('change',e=>{
+    const c=e.target.closest('input[data-s]');if(!c)return;
+    const i=+c.dataset.s;if(c.checked)siteUI.sel.add(i);else siteUI.sel.delete(i);
+    c.closest('.it').classList.toggle('sel',c.checked);atualizarSelSite();
+  });
   $('siteLista').addEventListener('click',async e=>{
     const b=e.target.closest('button[data-i]');if(!b)return;
     const r=await copiarSite([textoSite(siteUI.lista[+b.dataset.i])]);
     b.textContent=r?'Copiado!':'Falhou';setTimeout(()=>{b.textContent='Copiar';},1500);
   });
+}
+function atualizarSelSite(){
+  const n=siteUI.lista.length,k=siteUI.sel.size,b=$('siteCopiarSel'),t=$('siteSelTodos');
+  b.disabled=!k||siteUI.carregando;b.textContent='☑ Copiar selecionados'+(k?' ('+k+')':'');
+  t.checked=!!n&&k===n;t.indeterminate=k>0&&k<n;t.disabled=!n||siteUI.carregando;
+  $('siteSelTodosL').style.opacity=n&&!siteUI.carregando?'1':'.5';
 }
 function siteMsg(t,tipo){const el=$('siteSt');el.textContent=t||'';el.style.color=tipo==='erro'?'var(--err)':tipo==='ok'?'var(--ok)':'var(--muted)';}
 function abrirSite(){montarJanelaSite();$('siteBack').style.display='flex';carregarSite(siteUI.data||isoMG());$('siteCopiar').focus();}
@@ -2555,14 +2585,17 @@ function desenharSite(){
   $('siteCont').textContent=siteUI.carregando?'Carregando…':n?n+' alerta(s) emitido(s) em '+dBr+', do mais recente para o mais antigo':'';
   $('siteCopiar').disabled=!n||siteUI.carregando;
   $('sitePro').disabled=siteUI.data>=isoMG();
+  siteUI.sel=new Set([...siteUI.sel].filter(i=>i<n));
   $('siteLista').innerHTML=siteUI.carregando?'<div class="vazio">Buscando os alertas na planilha…</div>':
     !n?'<div class="vazio">Nenhum alerta emitido em '+esc(dBr)+'.</div>':
-    siteUI.lista.map((a,i)=>'<div class="it"><div class="meta">Emitido às '+esc(a.emitidoEm||'')+(a.responsavel?' · '+esc(a.responsavel):'')+'</div>'+
-      htmlSite(textoSite(a))+'<button type="button" class="btn small" data-i="'+i+'">Copiar</button></div>').join('');
+    siteUI.lista.map((a,i)=>{const on=siteUI.sel.has(i);return '<div class="it'+(on?' sel':'')+'"><div class="meta">Emitido às '+esc(a.emitidoEm||'')+(a.responsavel?' · '+esc(a.responsavel):'')+'</div>'+
+      '<input type="checkbox" data-s="'+i+'"'+(on?' checked':'')+' aria-label="Selecionar este alerta">'+
+      htmlSite(textoSite(a))+'<button type="button" class="btn small" data-i="'+i+'">Copiar</button></div>';}).join('');
+  atualizarSelSite();
 }
 function carregarSite(data){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(data||''))data=isoMG();
-  siteUI.data=data;$('siteData').value=data;$('siteData').max=isoMG();siteMsg('');
+  siteUI.sel=new Set();siteUI.data=data;$('siteData').value=data;$('siteData').max=isoMG();siteMsg('');
   if(!temFuncao('alertasParaSite')){   // plataforma de teste ou Apps Script sem o AlertasSite.gs: usa os alertas desta tela
     siteUI.lista=(state.active||[]).filter(a=>String(a.id||'').indexOf('A'+data.replace(/-/g,'')+'-')===0||(!a.id&&data===isoMG()))
       .map(a=>({id:a.id||'',emitidoEm:String(a.id||'').slice(10,12)+(a.id?':':'')+String(a.id||'').slice(12,14),horario:a.start,duracao:a.duration,
