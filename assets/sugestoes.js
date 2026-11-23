@@ -25,6 +25,7 @@
   var MAX_ARQ = 5, MAX_MB = 8, MAX_TOTAL_MB = 15;
   function ferramentaAtual() {
     var t = (document.title || '').toLowerCase();
+    if (t.indexOf('mapas clim') >= 0) return 'Mapas Climáticos';   // 2026.11.19.1
     if (t.indexOf('alerta') >= 0) return 'Alertas';
     if (t.indexOf('tempo severo') >= 0) return 'Tempo Severo';
     if (t.indexOf('chuva') >= 0) return 'Chuva';

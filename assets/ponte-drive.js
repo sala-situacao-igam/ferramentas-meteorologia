@@ -196,7 +196,10 @@
     'previsao-cidades': ['19YtqMK1eNVfcpwH7Zq4-mX8tfO7lr47H', 'Previsão cidades'],
     'reservatorios': ['1YZ_J-QTzj7S8G_qnRtg2Zs-b31J2itmq', 'Reservatórios'],
     'curto-prazo': ['1SXuqt0iTd50PN93Sa8WvwWAB2ZZDAmET', 'Chuva e tendência'],
-    'umidade-minima': ['1-iy3WTP0sDHzfxVGBUW7bhr6zKq6sZsF', 'Mapa de ícones (PNG)']
+    'umidade-minima': ['1-iy3WTP0sDHzfxVGBUW7bhr6zKq6sZsF', 'Mapa de ícones (PNG)'],
+    // 19/11/2026: Mapas Climáticos. Enquanto não houver pasta própria, salva na da Chuva (igual ao pastaPara_ do Codigo.gs);
+    // ao criar a pasta "Mapas Climáticos", trocar aqui o ID e o nome, e pôr o mesmo ID em CONFIG.PASTAS.mapasClimaticos
+    'mapas-climaticos': ['1SXuqt0iTd50PN93Sa8WvwWAB2ZZDAmET', 'Chuva e tendência']
   };
   function pastaDoArquivo(nome) {   // mesma regra do destinoPrevisao_ (SalvarArquivo.gs)
     var f = FERRAMENTA();
@@ -253,6 +256,31 @@
       { id: 'urCsv', nome: 'Tabela das mesorregiões', tipo: 'CSV', vista: '#abaMapa', precisa: 'Clique em “Carregar dados”' },
       { id: 'relPdf', nome: 'Relatório (Aviso Meteorológico)', tipo: 'PDF', desc: 'A4, igual à prévia', vista: '#abaRel', onde: 'Relatório (PDF)', aba: '#abaRelBtn', precisa: 'Carregue os dados na aba Mapa e tabela' }
     ],
+    // Mapas Climáticos (13/11/2026): os PNG só liberam com a conferência concluída e "Conferido por" preenchido
+    'mapas-climaticos': [
+      { id: 'mcPng_prec', nome: 'Acumulado de Precipitação', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      { id: 'mcPng_aprec', nome: 'Anomalia de Precipitação', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      { id: 'mcPng_atmed', nome: 'Anomalia de Temperatura Média', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      { id: 'mcPng_tmax', nome: 'Temperatura Máxima Absoluta', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      { id: 'mcPng_tmin', nome: 'Temperatura Mínima Absoluta', tipo: 'PNG', desc: 'Imagem 300 dpi', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      { id: 'mcPng_clima', nome: 'Climatologia de Precipitação', tipo: 'PNG', desc: 'Normal 1991-2020', vista: '#mcVistaIdw', precisa: 'Conclua a conferência das estações (etapa 1) e preencha “Conferido por”' },
+      // krigagem (em avaliação): só aparece com o método Krigagem aberto; arquivos com "_KRIGAGEM" no nome
+      { id: 'mcPngK_prec', nome: 'Acumulado de Precipitação (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngK_aprec', nome: 'Anomalia de Precipitação (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngK_clima', nome: 'Climatologia de Precipitação (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngK_atmed', nome: 'Anomalia de Temperatura Média (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngK_tmax', nome: 'Temperatura Máxima Absoluta (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngK_tmin', nome: 'Temperatura Mínima Absoluta (krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaKrig', precisa: 'Abra o produto com o método Krigagem e espere o cálculo; a conferência precisa estar concluída' },
+      // método recomendado (em avaliação): só aparece com o Método recomendado aberto; arquivo com o nome do método (_IDWLOCAL, _KRIGAGEM, _REGKRIG)
+      { id: 'mcPngR_prec', nome: 'Acumulado de Precipitação (método recomendado: IDW local, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngR_aprec', nome: 'Anomalia de Precipitação (método recomendado: IDW local, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngR_clima', nome: 'Climatologia de Precipitação (método recomendado: krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngR_atmed', nome: 'Anomalia de Temperatura Média (método recomendado: regressão-krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngR_tmax', nome: 'Temperatura Máxima Absoluta (método recomendado: regressão-krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcPngR_tmin', nome: 'Temperatura Mínima Absoluta (método recomendado: regressão-krigagem, em avaliação)', tipo: 'PNG', vista: '#mcVistaRec', precisa: 'Abra o produto com o Método recomendado e espere o cálculo; a conferência precisa estar concluída' },
+      { id: 'mcMesoCsv', nome: 'Tabela das mesorregiões (produto da tela)', tipo: 'CSV', vista: '#abaMapas', precisa: 'Conclua a conferência do produto da tela' },
+      { id: 'mcRegistro', nome: 'Registro da conferência', tipo: 'CSV', desc: 'Estações, decisões, motivos e SHA-256 dos arquivos', precisa: 'Conclua a conferência das estações e preencha “Conferido por”' }
+    ],
     'reservatorios': [
       { id: 'resPng', nome: 'Reservatórios', tipo: 'PNG', desc: 'Mapa Week 1', onde: 'Reservatórios · Week 1', aba: '.tab[data-tab=reserv]', precisa: 'Clique em “Gerar mapa” na aba Reservatórios' },
       { id: 'resCsv', nome: 'Reservatórios', tipo: 'CSV', desc: 'Tabela de precipitação', onde: 'Reservatórios · Week 1', aba: '.tab[data-tab=reserv]', precisa: 'Clique em “Gerar mapa” na aba Reservatórios' },
@@ -260,7 +288,11 @@
       { id: 'wk2Png', nome: 'Tendência Week 2', tipo: 'PNG', onde: 'Tendência · Week 1 + Week 2', aba: '.tab[data-tab=weekly]', precisa: 'Clique em “Gerar Week 1 + Week 2”' },
       { id: 'a24Png', nome: 'Acumulado 24 h', tipo: 'PNG', onde: 'Acumulados · 24h / 3 dias / 5 dias', aba: '.tab[data-tab=accum]', precisa: 'Gere os acumulados na aba Acumulados' },
       { id: 'a72Png', nome: 'Acumulado 3 dias', tipo: 'PNG', onde: 'Acumulados · 24h / 3 dias / 5 dias', aba: '.tab[data-tab=accum]', precisa: 'Gere os acumulados na aba Acumulados' },
-      { id: 'a120Png', nome: 'Acumulado 5 dias', tipo: 'PNG', onde: 'Acumulados · 24h / 3 dias / 5 dias', aba: '.tab[data-tab=accum]', precisa: 'Gere os acumulados na aba Acumulados' }
+      { id: 'a120Png', nome: 'Acumulado 5 dias', tipo: 'PNG', onde: 'Acumulados · 24h / 3 dias / 5 dias', aba: '.tab[data-tab=accum]', precisa: 'Gere os acumulados na aba Acumulados' },
+      // 13/11/2026: aba Barragens e municípios (72/96 h)
+      { id: 'brPng', nome: 'Barragens/município · figura aberta', tipo: 'PNG', desc: 'Representação escolhida na tela', onde: 'Barragens e municípios', aba: '.tab[data-tab=barr]', precisa: 'Clique em “Buscar dados do GFS” na aba Barragens e municípios' },
+      { id: 'brPdf', nome: 'Barragens/município · boletim', tipo: 'PDF', desc: 'Texto, figura e previsão diária', onde: 'Barragens e municípios', aba: '.tab[data-tab=barr]', precisa: 'Clique em “Buscar dados do GFS” na aba Barragens e municípios' },
+      { id: 'brCsv', nome: 'Barragens/município · tabelas', tipo: 'CSV', desc: 'Chuva por município e por barragem', onde: 'Barragens e municípios', aba: '.tab[data-tab=barr]', precisa: 'Clique em “Buscar dados do GFS” na aba Barragens e municípios' }
     ]
   };
   function materiais() {
@@ -298,8 +330,9 @@
     'alertas': [['#mapSvg', 'Mapa de alertas'], ['#relPages .a4 svg', 'Relatório (página 1)']],
     'curto-prazo': [['#cpMapaA img', 'Mapa'], ['#cpMapaB img', 'WRF']],
     'umidade-minima': [['#urMapa img', 'Mapa de umidade mínima'], ['#relCanvas', 'Relatório (página 1)']],
+    'mapas-climaticos': [['#mcMapa img', 'Mapa'], ['#mcEstSvg', 'Estações']],
     'reservatorios': [['#resCanvas', 'Reservatórios'], ['#wk1Canvas', 'Week 1'], ['#wk2Canvas', 'Week 2'],
-      ['#a24Canvas', '24 h'], ['#a72Canvas', '3 dias'], ['#a120Canvas', '5 dias']]
+      ['#a24Canvas', '24 h'], ['#a72Canvas', '3 dias'], ['#a120Canvas', '5 dias'], ['#brMapa img', 'Barragens e municípios']]
   };
   // Tempo Severo e Chuva: o "Mapa final" só é desenhado quando aparece na tela; se ainda não foi,
   // a prévia é montada na hora com o mesmo layout (sem o mapa base, que demora a carregar).
@@ -402,7 +435,7 @@
   function fechar() { fundo.classList.remove('on'); if (botao) botao.focus(); }
   function aberto() { return !!(fundo && fundo.classList.contains('on')); }
 
-  var NOMES = { 'previsao': 'Previsão diária', 'tempo-severo': 'Tempo Severo', 'chuva': 'Chuva e Tendência', 'alertas': 'Alertas', 'reservatorios': 'Reservatórios e Tendência', 'curto-prazo': 'Curto Prazo', 'umidade-minima': 'Umidade Mínima' };
+  var NOMES = { 'previsao': 'Previsão diária', 'tempo-severo': 'Tempo Severo', 'chuva': 'Chuva e Tendência', 'alertas': 'Alertas', 'reservatorios': 'Reservatórios e Tendência', 'curto-prazo': 'Curto Prazo', 'umidade-minima': 'Umidade Mínima', 'mapas-climaticos': 'Mapas Climáticos' };
   function nomeDoMapa() {   // ferramenta · aba aberta (ex.: "Previsão diária · Boletim em PDF")
     var aba = document.querySelector('[role=tab][aria-selected=true], .tab.active');
     var t = aba ? aba.textContent.replace(/\s+/g, ' ').trim() : '';
