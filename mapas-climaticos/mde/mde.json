@@ -5,7 +5,7 @@
  "sem_dado": -32768,
  "formato": "Int16 LE, linhas do norte para o sul",
  "blocos": 385,
- "gerado_em": "2026-11-13T18:34Z",
+ "gerado_em": "2026-11-23T17:16Z",
  "grades": {
   "mg": {
    "lon0": -51.06,
